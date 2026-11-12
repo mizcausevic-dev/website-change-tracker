@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS sources (
   http_etag TEXT,
   http_last_modified TEXT,
   last_raw_hash TEXT,
+  rebaseline_pending INTEGER NOT NULL DEFAULT 0,
   revision INTEGER NOT NULL DEFAULT 1
 ) STRICT;
 CREATE INDEX IF NOT EXISTS sources_due ON sources (status, next_check_at);
@@ -71,7 +72,8 @@ CREATE TABLE IF NOT EXISTS checks (
   bytes INTEGER,
   snapshot_id TEXT,
   change_id TEXT,
-  error TEXT
+  error TEXT,
+  warnings TEXT NOT NULL DEFAULT '[]'
 ) STRICT;
 CREATE INDEX IF NOT EXISTS checks_source ON checks (source_id, id);
 CREATE INDEX IF NOT EXISTS checks_time ON checks (started_at);
@@ -159,10 +161,34 @@ CREATE INDEX IF NOT EXISTS runs_created ON check_runs (created_at);
 CREATE INDEX IF NOT EXISTS deliveries_created ON deliveries (created_at);
 `;
 
+/**
+ * Columns added after 1.0.0. `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so a
+ * database file from an earlier version needs them added explicitly, or every write would fail.
+ */
+const ADDED_COLUMNS: Array<{ table: string; column: string; ddl: string; afterAdd?: string }> = [
+  { table: 'sources', column: 'proposer_fp', ddl: 'proposer_fp TEXT' },
+  {
+    table: 'sources', column: 'rebaseline_pending', ddl: 'rebaseline_pending INTEGER NOT NULL DEFAULT 0',
+    // 1.0.2 changed how ignore_patterns match, so sources that use them start from a fresh baseline.
+    afterAdd: "UPDATE sources SET rebaseline_pending = 1, last_raw_hash = NULL WHERE ignore_patterns != '[]'",
+  },
+  { table: 'checks', column: 'warnings', ddl: "warnings TEXT NOT NULL DEFAULT '[]'" },
+];
+
+function migrate(db: DatabaseSync): void {
+  for (const c of ADDED_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${c.table})`).all() as Array<{ name: string }>;
+    if (cols.some((x) => x.name === c.column)) continue;
+    db.exec(`ALTER TABLE ${c.table} ADD COLUMN ${c.ddl}`);
+    if (c.afterAdd) db.exec(c.afterAdd);
+  }
+}
+
 export function openDb(path = ':memory:'): Db {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 

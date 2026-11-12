@@ -97,7 +97,7 @@ sequenceDiagram
 
 - *SQLite in one process.* It keeps the demo to one container and lets the scheduler, rate limiter and idempotency store share memory. Scaling out moves state to Postgres, checks to a queue, and limits to Redis; the transport, extractor, scorer and store are separate modules so each swap is local.
 - *Hand-written OpenAPI.* Generating it from validators would add a schema library. Instead the contract tests hold the document and the router to each other in both directions.
-- *No regex from callers.* `ignore_patterns` are literal text with `*` wildcards, which rules out catastrophic backtracking on the server.
+- *No regex from callers.* `ignore_patterns` are literal text with `*` wildcards, matched by a plain scanner with a hard per-page work budget. Version 1.0.1 and earlier compiled wildcards to a backtracking regex, which stacked wildcards could stall for seconds; see the changelog for 1.0.2. Built-in noise filters run on page text the tracked site controls, so they are kept linear too.
 - *TypeScript without a build.* Node 24 strips types at load time, so the container runs `src/server.ts` directly. `tsc --noEmit` still type-checks in CI.
 
 ## Security

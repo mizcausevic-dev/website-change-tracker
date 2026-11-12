@@ -44,7 +44,7 @@ export function buildOpenApi(baseUrl: string): S {
     tags: { type: 'array', maxItems: 10, items: str({ pattern: '^[a-z0-9][a-z0-9-]{0,31}$' }) },
     selector: nullable(str({ maxLength: 200, description: 'CSS selector for the content root. Defaults to <body>.' })),
     ignore_selectors: { type: 'array', maxItems: 20, items: str({ maxLength: 200 }), description: 'Elements removed before extraction (ads, carousels, widgets).' },
-    ignore_patterns: { type: 'array', maxItems: 20, items: str({ maxLength: 200 }), description: 'Literal text with `*` wildcards (not regex, to rule out ReDoS) removed from each line.' },
+    ignore_patterns: { type: 'array', maxItems: 20, items: str({ maxLength: 200 }), description: 'Literal text with `*` wildcards (each spans up to 400 characters within a line), case-insensitive, removed from each line. Not regex: matched by a linear scanner with a per-page work budget.' },
     check_interval_minutes: int({ minimum: 15, maximum: 10080, default: 60 }),
     min_significance: int({ minimum: 0, maximum: 100, default: 20, description: 'Changes scoring below this are recorded but not "meaningful": excluded from digests and webhooks.' }),
     notes: nullable(str({ maxLength: 500 })),
@@ -223,6 +223,7 @@ export function buildOpenApi(baseUrl: string): S {
           id: str({ pattern: '^chk_' }), object: str({ const: 'check' }), source_id: str(), run_id: nullable(str()), started_at: dt, duration_ms: int(),
           outcome: str({ enum: ['baseline', 'changed', 'unchanged', 'noise', 'not_modified', 'blocked', 'error'] }), http_status: nullable(int()), bytes: nullable(int()),
           snapshot_id: nullable(str()), change_id: nullable(str()), error: nullable(str()),
+          warnings: { type: 'array', items: str({ enum: ['ignore_patterns_budget_exceeded', 'selector_not_found'] }), description: 'Non-fatal problems: patterns partly applied because the per-page work budget ran out, or the source selector matched nothing (the whole body was used).' },
         }),
         Change: obj({
           id: str({ pattern: '^chg_' }), object: str({ const: 'change' }), source_id: str(), source_name: nullable(str()), detected_at: dt,

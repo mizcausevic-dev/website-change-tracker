@@ -69,6 +69,7 @@ export function checkOut(r: R) {
     snapshot_id: s(r.snapshot_id),
     change_id: s(r.change_id),
     error: s(r.error),
+    warnings: parseJson<string[]>(r.warnings, []),
   };
 }
 

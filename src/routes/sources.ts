@@ -151,8 +151,10 @@ export function registerSources(app: Hono<Env>, ctx: Ctx): void {
       const sets = cols.map((k) => `${k} = ?`);
       const params = cols.map((k) => (Array.isArray(value[k]) ? JSON.stringify(value[k]) : (value[k] as string | number | null)));
       // Extraction settings changed: drop HTTP validators so the next check re-reads the page instead of getting a 304.
-      const resetValidators = cols.some((k) => ['selector', 'ignore_selectors', 'ignore_patterns'].includes(k));
-      run(ctx.db, `UPDATE sources SET ${sets.join(', ')}, updated_at = ?, revision = revision + 1${resetValidators ? ', http_etag = NULL, http_last_modified = NULL, last_raw_hash = NULL' : ''} WHERE id = ?`,
+      // Only a real change to the extraction rules re-baselines; resending identical values must not
+      // fold a genuine page edit into a silent baseline.
+      const resetValidators = cols.some((k) => ['selector', 'ignore_selectors', 'ignore_patterns'].includes(k) && JSON.stringify(value[k]) !== JSON.stringify(k === 'selector' ? row[k] : JSON.parse(String(row[k]))));
+      run(ctx.db, `UPDATE sources SET ${sets.join(', ')}, updated_at = ?, revision = revision + 1${resetValidators ? ', http_etag = NULL, http_last_modified = NULL, last_raw_hash = NULL, rebaseline_pending = 1' : ''} WHERE id = ?`,
         ...params, iso(now), String(row.id));
     }
     const out = sourceOut(load(String(row.id)), base);

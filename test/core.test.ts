@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { diffText, toUnified } from '../src/core/diff.ts';
-import { compileIgnorePattern, extract } from '../src/core/extract.ts';
+import { compileIgnorePattern, extract, stripWildcardMatches } from '../src/core/extract.ts';
 import { isAllowed, parseRobots } from '../src/core/robots.ts';
 import { compareFacts, editExcerpt, score } from '../src/core/significance.ts';
 import { isPublicAddress } from '../src/core/ssrf.ts';
@@ -48,12 +48,67 @@ describe('extract', () => {
   });
 
   it('treats ignore patterns as literal text with * wildcards, not regex', () => {
-    const re = compileIgnorePattern('Promo (a+)+$ * ends');
-    assert.equal(re.test('Promo (a+)+$ for you ends'), true);
-    // A catastrophic-backtracking regex body is inert here because it is escaped.
+    const strip = (line: string, p: string) => stripWildcardMatches(line, compileIgnorePattern(p), { left: 1e9 })!.out;
+    assert.equal(strip('Promo (a+)+$ for you ends today', 'Promo (a+)+$ * ends'), ' today', 'regex metacharacters are literal');
+    assert.equal(strip('SALE ends Friday | sale ends Monday', 'sale ends *day'), ' | ', 'case-insensitive, shortest match, every occurrence');
+    assert.equal(strip('a' + 'x'.repeat(400) + 'b', 'a*b'), '', 'a wildcard spans up to 400 characters');
+    assert.equal(strip('a' + 'x'.repeat(401) + 'b', 'a*b'), 'a' + 'x'.repeat(401) + 'b', 'and no further');
+    assert.equal(strip('keep this', '*'), 'keep this', 'a bare wildcard removes nothing');
+    assert.equal(strip('Posted 3 hours ago by admin', '* ago'), ' by admin', 'a leading wildcard reaches back up to 400 characters');
+    assert.equal(strip('İstanbul office: Sale ends', 'sale'), 'İstanbul office:  ends', 'a Turkish İ does not disable matching on the line');
+  });
+});
+
+describe('ignore pattern and noise filter cost', () => {
+  // Regression: wildcards used to compile to a backtracking regex; `a*a*a*b` against 2,000 characters
+  // ran for over 20 seconds. Page text is attacker-controlled too, so the built-in filters are checked as well.
+  const page = (line: string, n: number) => `<body>${Array.from({ length: n }, () => `<p>${line}</p>`).join('')}</body>`;
+  const timed = (fn: () => void) => {
     const t = performance.now();
-    compileIgnorePattern('(a+)+$').test('a'.repeat(5000) + '!');
-    assert.ok(performance.now() - t < 50);
+    fn();
+    return performance.now() - t;
+  };
+
+  it('bounds stacked wildcards that defeated the old regex', () => {
+    const ms = timed(() => extract(page('x'.repeat(2000), 10), { ignorePatterns: ['x*x*x*q'] }));
+    assert.ok(ms < 500, `took ${Math.round(ms)} ms`);
+  });
+
+  it('caps total work per page and flags it instead of stalling', () => {
+    let ex!: ReturnType<typeof extract>;
+    const ms = timed(() => {
+      ex = extract(page('x'.repeat(2000), 1000), { ignorePatterns: Array.from({ length: 20 }, () => `${'x*'.repeat(99)}q`) });
+    });
+    assert.ok(ms < 2000, `took ${Math.round(ms)} ms`);
+    assert.equal(ex.maskedTokens['ignore_pattern_budget_exceeded'], 1);
+  });
+
+  it('keeps built-in filters linear on hostile page text', () => {
+    for (const line of ['a-'.repeat(1000), '1,'.repeat(1000)]) {
+      const ms = timed(() => extract(page(line, 200)));
+      assert.ok(ms < 150, `${line.slice(0, 4)}…: ${Math.round(ms)} ms`);
+    }
+  });
+
+  it('does not exhaust the budget on a large benign page with many patterns', () => {
+    const prose = 'The quick brown fox jumps over the lazy dog while the editors review pricing tables. '.repeat(23);
+    const ex = extract(page(prose, 1000), { ignorePatterns: Array.from({ length: 20 }, (_, i) => `nomatch${i}*never`) });
+    assert.equal(ex.maskedTokens['ignore_pattern_budget_exceeded'], undefined);
+  });
+
+  it('keeps price extraction linear and capped on hostile text', () => {
+    let ex!: ReturnType<typeof extract>;
+    const ms = timed(() => {
+      ex = extract(page(`${'- '.repeat(700)}x${' $1'.repeat(190)}`, 200));
+    });
+    assert.ok(ms < 1500, `took ${Math.round(ms)} ms`);
+    assert.ok(extract(page('$1 '.repeat(666), 50)).facts.length <= 100, 'facts are capped per page');
+    assert.ok(ex.facts.length <= 100);
+  });
+
+  it('still masks real volatile tokens', () => {
+    const ex = extract(page('Session ref Ab3dE6gH9jK2mN5pQ8rS1tU4 · 1,284 views · ends in 3 hours', 1));
+    assert.equal(ex.text, 'Session ref {token} · {count} · {countdown}');
   });
 });
 

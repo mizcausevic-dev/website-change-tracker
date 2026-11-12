@@ -21,6 +21,9 @@ export interface SourceRow {
   http_last_modified: string | null;
   last_raw_hash: string | null;
   last_checked_at: string | null;
+  /** Set when extraction settings change; the next successful fetch becomes a silent new baseline. */
+  rebaseline_pending: number;
+  revision: number;
 }
 
 export type Outcome = 'baseline' | 'changed' | 'unchanged' | 'noise' | 'not_modified' | 'blocked' | 'error';
@@ -49,6 +52,15 @@ export async function checkSource(ctx: Ctx, source: SourceRow, runId: string | n
   const now = clock.now();
 
   return tx(db, () => {
+    // The fetch awaited outside this transaction, so the source may have been edited or deleted meanwhile.
+    const current = one<{ revision: number }>(db, 'SELECT revision FROM sources WHERE id = ?', source.id);
+    if (!current) {
+      return { check_id: '', source_id: source.id, outcome: 'error' as Outcome, change_id: null, significance: null, meaningful: null, error: 'source deleted during check' };
+    }
+    // Edited mid-check: this result used the old rules, so it must not consume the re-baseline flag
+    // or restore the HTTP validators and raw hash that the edit cleared.
+    const sameRevision = current.revision === source.revision;
+    const warnings: string[] = [];
     const checkId = newId('chk', startedAt);
     let outcome: Outcome;
     let snapshotId: string | null = null;
@@ -67,6 +79,8 @@ export async function checkSource(ctx: Ctx, source: SourceRow, runId: string | n
         ignorePatterns: parseJson<string[]>(source.ignore_patterns, []),
       });
       rawHash = ex.rawHash;
+      if (ex.maskedTokens['ignore_pattern_budget_exceeded']) warnings.push('ignore_patterns_budget_exceeded');
+      if (!ex.selectorMatched) warnings.push('selector_not_found');
       const last = one<{ id: string; content_hash: string; text: string; word_count: number; facts: string }>(
         db,
         'SELECT id, content_hash, text, word_count, facts FROM snapshots WHERE source_id = ? ORDER BY id DESC LIMIT 1',
@@ -78,7 +92,10 @@ export async function checkSource(ctx: Ctx, source: SourceRow, runId: string | n
         snapshotId = newId('snp', now);
         run(db, `INSERT INTO snapshots (id, source_id, captured_at, content_hash, text, word_count, byte_size, http_status, facts) VALUES (?,?,?,?,?,?,?,?,?)`,
           snapshotId, source.id, iso(now), ex.hash, ex.text, ex.wordCount, page.bytes, page.status ?? 200, JSON.stringify(ex.facts));
-        if (!last) outcome = 'baseline';
+        // After an edit to the extraction settings, old and new snapshots were produced by different
+        // rules, so their difference says nothing about the page. Record a new baseline instead of a
+        // change. Trade-off: a real edit landing in the same check is folded into the baseline.
+        if (!last || source.rebaseline_pending) outcome = 'baseline';
         else {
           outcome = 'changed';
           const d = diffText(last.text, ex.text);
@@ -102,11 +119,15 @@ export async function checkSource(ctx: Ctx, source: SourceRow, runId: string | n
       }
     }
 
-    run(db, `INSERT INTO checks (id, source_id, run_id, started_at, duration_ms, outcome, http_status, bytes, snapshot_id, change_id, error) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      checkId, source.id, runId, iso(startedAt), page.durationMs, outcome, page.status, page.bytes, snapshotId, changeId, page.error);
-    run(db, `UPDATE sources SET last_checked_at = ?, last_outcome = ?, next_check_at = ?, http_etag = COALESCE(?, http_etag),
-             http_last_modified = COALESCE(?, http_last_modified), last_raw_hash = ? WHERE id = ?`,
-      iso(now), outcome, iso(nextCheck(now, source.check_interval_minutes, source.id)), page.etag, page.lastModified, rawHash, source.id);
+    run(db, `INSERT INTO checks (id, source_id, run_id, started_at, duration_ms, outcome, http_status, bytes, snapshot_id, change_id, error, warnings) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      checkId, source.id, runId, iso(startedAt), page.durationMs, outcome, page.status, page.bytes, snapshotId, changeId, page.error, JSON.stringify(warnings));
+    run(db, `UPDATE sources SET last_checked_at = ?, last_outcome = ?, next_check_at = ? WHERE id = ?`,
+      iso(now), outcome, iso(nextCheck(now, source.check_interval_minutes, source.id)), source.id);
+    if (sameRevision) {
+      run(db, `UPDATE sources SET http_etag = COALESCE(?, http_etag), http_last_modified = COALESCE(?, http_last_modified), last_raw_hash = ?,
+               rebaseline_pending = CASE WHEN ? THEN 0 ELSE rebaseline_pending END WHERE id = ?`,
+        page.etag, page.lastModified, rawHash, page.kind === 'ok' ? 1 : 0, source.id);
+    }
 
     return { check_id: checkId, source_id: source.id, outcome, change_id: changeId, significance, meaningful, error: page.error };
   });
