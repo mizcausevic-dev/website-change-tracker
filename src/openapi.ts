@@ -248,7 +248,7 @@ export function buildOpenApi(baseUrl: string): S {
           id: str({ pattern: '^dlv_' }), object: str({ const: 'delivery' }), webhook_id: str(), message_id: str(), event_type: str(), status: str({ enum: ['pending', 'succeeded', 'retrying', 'failed'] }),
           attempts: int(), last_response_status: nullable(int()), last_error: nullable(str()), created_at: dt, next_attempt_at: nullable(dt), delivered_at: nullable(dt),
         }),
-        StatsOverview: obj({ object: str({ const: 'stats_overview' }), generated_at: dt, window: { type: 'object' }, totals: { type: 'object' }, by_category: { type: 'object' }, daily: { type: 'array' }, sources: { type: 'array' }, price_series: { type: 'array' }, recent_deliveries: { type: 'array', items: ref('Delivery') }, receiver: { type: 'object' } }),
+        StatsOverview: obj({ object: str({ const: 'stats_overview' }), as_of: { ...dt, description: 'Timestamp of the newest data in the response.' }, window: { type: 'object' }, totals: { type: 'object' }, by_category: { type: 'object' }, daily: { type: 'array' }, sources: { type: 'array' }, price_series: { type: 'array' }, recent_deliveries: { type: 'array', items: ref('Delivery') }, receiver: { type: 'object' } }),
       },
     },
   };

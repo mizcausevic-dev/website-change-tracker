@@ -293,7 +293,7 @@ function renderPrices(s) {
   // One series per chart: tiers on the same page can differ 10x, which would flatten the selected line.
   const related = [p];
   const W = Math.max(300, el.clientWidth || 480), H = 240, m = { t: 14, r: 14, b: 26, l: 46 };
-  const t0 = Date.parse(s.window.start), t1 = Date.parse(s.generated_at);
+  const t0 = Date.parse(s.window.start), t1 = Date.parse(s.as_of);
   const vals = related.flatMap((q) => q.points.map((x) => x.v));
   let lo = Math.min(...vals), hi = Math.max(...vals);
   // "Nice" axis: steps of 1, 2 or 5 x 10^k, so ticks land on round prices.

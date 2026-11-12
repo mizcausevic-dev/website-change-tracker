@@ -66,6 +66,17 @@ describe('shared demo key abuse', () => {
   });
 });
 
+describe('conditional requests over time', () => {
+  it('answers 304 for the stats overview when time passes but no data changed', async () => {
+    // Regression: the body once embedded the request time, so its ETag never matched in production
+    // (the frozen test clock hid it). Move the clock and expect the ETag to hold.
+    const r1 = await h.req('GET', '/v1/stats/overview', { key: DEMO_KEY });
+    h.clock.advance(5_000);
+    const r2 = await h.req('GET', '/v1/stats/overview', { key: DEMO_KEY, headers: { 'if-none-match': r1.headers.get('etag')! } });
+    assert.equal(r2.status, 304);
+  });
+});
+
 describe('ssrf address forms', () => {
   for (const ip of ['::7f00:1', '::127.0.0.1', '::ffff:0:7f00:1', '::ffff:0:a9fe:a9fe']) {
     it(`blocks ${ip}`, () => assert.equal(isPublicAddress(ip), false));

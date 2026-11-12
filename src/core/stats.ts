@@ -84,7 +84,8 @@ export function overview(db: Db, now: number, days: number) {
   const contentChecks = outcomes.changed! + outcomes.unchanged! + outcomes.noise! + outcomes.not_modified!;
   return {
     object: 'stats_overview',
-    generated_at: iso(now),
+    // Timestamp of the newest data, not the request time: the body (and so its ETag) only changes when data does.
+    as_of: asOf(db, now),
     window: { days, start: iso(start), end: iso(end) },
     totals: {
       sources: byStatus,
@@ -115,4 +116,11 @@ export function overview(db: Db, now: number, days: number) {
     })),
     price_series: priceSeries,
   };
+}
+
+function asOf(db: Db, now: number): string {
+  const r = all<{ t: string | null }>(db,
+    `SELECT MAX(t) AS t FROM (SELECT MAX(started_at) AS t FROM checks UNION ALL SELECT MAX(detected_at) FROM changes
+       UNION ALL SELECT MAX(created_at) FROM deliveries UNION ALL SELECT MAX(updated_at) FROM sources)`)[0];
+  return r?.t ?? iso(now);
 }

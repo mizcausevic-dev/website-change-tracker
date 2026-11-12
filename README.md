@@ -2,7 +2,7 @@
 
 Driftline watches an approved list of web pages and reports the changes that matter. Each check fetches a page politely, reduces it to readable text, masks volatile tokens such as clocks and session IDs, diffs it against the last snapshot, and scores the change from 0 to 100 with the reasons behind the score. Meaningful changes go out as signed webhooks and a daily digest, and everything is available through a versioned REST API.
 
-**Live demo:** LIVE_URL · **API reference:** LIVE_URL/docs · **OpenAPI 3.1:** LIVE_URL/v1/openapi.json · **Product brief:** LIVE_URL/brief
+**Live demo:** https://website-change-tracker-560544171727.us-east1.run.app · **API reference:** https://website-change-tracker-560544171727.us-east1.run.app/docs · **OpenAPI 3.1:** https://website-change-tracker-560544171727.us-east1.run.app/v1/openapi.json · **Product brief:** https://website-change-tracker-560544171727.us-east1.run.app/brief
 
 The demo tracks fictional sites on the reserved `.example` domain, served by the app itself and changing on a schedule. Thirty days of history are replayed at boot from the same deterministic fixtures, then the scheduler keeps checking live. No third-party website is fetched.
 
@@ -20,7 +20,7 @@ The demo key is public on purpose. It can read everything, propose sources, and 
 
 ```bash
 export KEY=wct_demo_public_explorer_key
-export API=LIVE_URL
+export API=https://website-change-tracker-560544171727.us-east1.run.app
 
 # Discover
 curl -s $API/v1
