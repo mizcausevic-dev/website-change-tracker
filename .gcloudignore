@@ -1,0 +1,10 @@
+# `gcloud run deploy --source .` uploads only what the Dockerfile needs (allowlist, not denylist).
+*
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!src/
+!src/**
+!public/
+!public/**

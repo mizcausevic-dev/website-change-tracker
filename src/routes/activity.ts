@@ -99,6 +99,9 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
   app.post('/v1/check-runs', async (c) => {
     const key = c.get('key')!;
     requireScope(key, 'checks:run');
+    // Two buckets: per client, and per key overall (the demo key is shared by every visitor).
+    const perKey = limiter.take(`runs-key:${key.id}`, 12, ctx.clock.now());
+    if (!perKey.allowed) throw new ApiError(429, 'rate-limited', 'Too many check runs', `This key may start 12 check runs per minute across all clients. Retry after ${perKey.retryAfterSec} seconds.`, {}, { 'Retry-After': String(perKey.retryAfterSec) });
     const d = limiter.take(`runs:${key.id}:${c.get('clientIp')}`, 6, ctx.clock.now());
     if (!d.allowed) throw new ApiError(429, 'rate-limited', 'Too many check runs', `Check runs are limited to 6 per minute. Retry after ${d.retryAfterSec} seconds.`, {}, { 'Retry-After': String(d.retryAfterSec) });
     const body = await readJsonObject(c);
@@ -238,6 +241,6 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
     const out = overview(ctx.db, ctx.clock.now(), days);
     // Public, demo-wide delivery feed for the dashboard: deliveries are only visible in aggregate here.
     const deliveries = all<Row>(ctx.db, `SELECT d.* FROM deliveries d ORDER BY d.id DESC LIMIT 8`).map(deliveryOut);
-    return c.json({ ...out, recent_deliveries: deliveries, receiver: { verified: ctx.receiver.received.filter((r) => r.verified).length, rejected: ctx.receiver.received.filter((r) => !r.verified).length } });
+    return c.json({ ...out, recent_deliveries: deliveries, receiver: { verified: ctx.receiver.received.filter((r) => r.verified && !r.duplicate).length, duplicates: ctx.receiver.received.filter((r) => r.duplicate).length, rejected: ctx.receiver.received.filter((r) => !r.verified).length } });
   });
 }

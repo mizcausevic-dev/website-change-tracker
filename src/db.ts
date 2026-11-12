@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS sources (
   notes TEXT,
   review_note TEXT,
   proposed_by TEXT NOT NULL,
+  proposer_fp TEXT,
   reviewed_by TEXT,
   reviewed_at TEXT,
   created_at TEXT NOT NULL,
@@ -153,6 +154,9 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   body TEXT,
   created_at INTEGER NOT NULL
 ) STRICT;
+CREATE INDEX IF NOT EXISTS idempotency_created ON idempotency_keys (created_at);
+CREATE INDEX IF NOT EXISTS runs_created ON check_runs (created_at);
+CREATE INDEX IF NOT EXISTS deliveries_created ON deliveries (created_at);
 `;
 
 export function openDb(path = ':memory:'): Db {

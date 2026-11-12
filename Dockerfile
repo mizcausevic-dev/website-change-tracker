@@ -1,13 +1,18 @@
 # syntax=docker/dockerfile:1
-# Base image pinned by digest (node:24.11.0-bookworm-slim, multi-arch index) so rebuilds are reproducible.
-FROM node:24.11.0-bookworm-slim@sha256:76d0ed0ed93bed4f4376211e9d8fddac4d8b3fbdb54cc45955696001a3c91152 AS deps
+# Base image pinned by digest (node:24.22.3-bookworm-slim, multi-arch index; a Node security release) so rebuilds are reproducible.
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # --ignore-scripts: no dependency install hooks run at build time.
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-FROM node:24.11.0-bookworm-slim@sha256:76d0ed0ed93bed4f4376211e9d8fddac4d8b3fbdb54cc45955696001a3c91152
-ENV NODE_ENV=production PORT=8080 TRUST_PROXY=true
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
+# TRUST_PROXY is deliberately not set here: it is only safe behind a proxy that appends the client IP
+# (set it in the Cloud Run service config). Anywhere else it would let clients pick their rate-limit bucket.
+ENV NODE_ENV=production PORT=8080
+# Package managers are not needed at runtime; removing them shrinks the attack surface.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./

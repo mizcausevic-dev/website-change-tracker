@@ -106,7 +106,7 @@ The fetcher is the dangerous part of any change tracker: it requests URLs that c
 
 ## Run it locally
 
-Requires Node 24.11 or newer.
+Requires Node 24.11 or newer (the container uses 24.22.3).
 
 ```bash
 npm ci
@@ -130,17 +130,19 @@ Configuration (environment variables):
 
 ## Deploy
 
-The live demo runs on Google Cloud Run from the Dockerfile in this repository (base image pinned by digest, non-root user, no build step):
+The live demo runs on Google Cloud Run from the Dockerfile in this repository (base image pinned by digest, non-root user, no package managers at runtime, no build step). `.gcloudignore` is an allowlist, so only the Dockerfile, lockfile, `src/` and `public/` are uploaded.
 
 ```bash
 gcloud run deploy website-change-tracker --source . --region us-east1 \
   --allow-unauthenticated --max-instances 1 --min-instances 0 --cpu-boost \
-  --service-account <runtime-sa-with-no-roles> \
-  --set-env-vars PUBLIC_BASE_URL=<service url> \
-  --set-secrets ADMIN_API_KEY=<secret>:latest
+  --concurrency 80 --timeout 60 \
+  --service-account <runtime service account with no project roles> \
+  --set-env-vars PUBLIC_BASE_URL=<service url>,TRUST_PROXY=true
 ```
 
-`--max-instances 1` matters: the rate limiter, idempotency store and scheduler are in-process. With `--min-instances 0` the service scales to zero when idle and reseeds the same deterministic history on the next cold start.
+- `--max-instances 1` matters: the rate limiter, idempotency store and scheduler are in-process. With `--min-instances 0` the service scales to zero when idle and reseeds the same deterministic history on the next cold start; the scheduler only runs while the instance is serving.
+- The public demo runs **without** an admin key, so approving, editing and webhook management are unreachable there. To enable them, store a key in Secret Manager, grant the runtime service account `roles/secretmanager.secretAccessor` on that one secret (not the project), and add `--set-secrets ADMIN_API_KEY=<secret>:<version>`.
+- `TRUST_PROXY=true` belongs in the service config, not the image: it is only correct behind a proxy that appends the client address to `X-Forwarded-For`.
 
 ## Project layout
 

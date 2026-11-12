@@ -58,6 +58,9 @@ Every problem also carries `instance` (the request path) and `request_id` (match
 ## precondition-required
 `428`. `PATCH` requires `If-Match` so concurrent edits are not silently lost.
 
+## proposal-limit
+`429`. A key that can only propose sources (such as the shared demo key) may have 3 proposals awaiting review per client. On the public demo, visitor proposals expire after 30 minutes.
+
 ## rate-limited
 `429`. Too many requests for this key and client. Wait `Retry-After` seconds. `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` describe the bucket.
 

@@ -7,6 +7,7 @@ export interface ReceivedEvent {
   message_id: string;
   event_type: string;
   verified: boolean;
+  duplicate: boolean;
 }
 
 /**
@@ -34,7 +35,11 @@ export function routingTransport(opts: {
       } catch {
         /* keep 'unknown' */
       }
-      opts.received.unshift({ received_at: new Date(opts.now()).toISOString(), message_id: headers['webhook-id'] ?? '', event_type: type, verified: ok });
+      // A receiver must be idempotent: retries reuse the message id, and a captured request could be
+      // replayed inside the timestamp window. Acknowledge duplicates without processing them again.
+      const messageId = headers['webhook-id'] ?? '';
+      const duplicate = ok && opts.received.some((e) => e.verified && e.message_id === messageId);
+      opts.received.unshift({ received_at: new Date(opts.now()).toISOString(), message_id: messageId, event_type: type, verified: ok, duplicate });
       opts.received.length = Math.min(opts.received.length, 100);
       return { status: ok ? 204 : 401, headers: {}, body: '', bytes: 0, finalUrl: req.url };
     }

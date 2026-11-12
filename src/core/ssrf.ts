@@ -18,7 +18,8 @@ const V4: Array<[string, number]> = [
   ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
 ];
 const V6: Array<[string, number]> = [
-  ['::', 128], ['::1', 128], ['64:ff9b::', 96], ['64:ff9b:1::', 48], ['100::', 64], ['2001::', 23],
+  // ::/96 is IPv4-compatible (deprecated) and also covers :: and ::1; ::ffff:0:0:0/96 is IPv4-translated.
+  ['::', 96], ['::ffff:0:0:0', 96], ['64:ff9b::', 96], ['64:ff9b:1::', 48], ['100::', 64], ['2001::', 23],
   ['2001:db8::', 32], ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8],
 ];
 for (const [net, prefix] of V4) blocked.addSubnet(net, prefix, 'ipv4');

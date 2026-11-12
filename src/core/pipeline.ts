@@ -20,6 +20,7 @@ export interface SourceRow {
   http_etag: string | null;
   http_last_modified: string | null;
   last_raw_hash: string | null;
+  last_checked_at: string | null;
 }
 
 export type Outcome = 'baseline' | 'changed' | 'unchanged' | 'noise' | 'not_modified' | 'blocked' | 'error';

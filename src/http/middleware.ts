@@ -144,7 +144,8 @@ export function idempotency(ctx: Ctx): MiddlewareHandler<Env> {
   return async (c, next) => {
     if (c.req.method !== 'POST') return next();
     const key = c.req.header('idempotency-key');
-    if (!key) return next();
+    // Anonymous requests can't create anything, so they get no idempotency storage.
+    if (!key || !c.get('key')) return next();
     if (key.length < 1 || key.length > 255) throw new ApiError(400, 'invalid-idempotency-key', 'Invalid Idempotency-Key', 'Keys must be 1–255 characters.');
     const now = ctx.clock.now();
     const apiKey = c.get('key');
@@ -172,7 +173,8 @@ export function idempotency(ctx: Ctx): MiddlewareHandler<Env> {
       run(ctx.db, 'DELETE FROM idempotency_keys WHERE scope = ?', scope);
       throw err;
     }
-    if (c.res.status >= 500) {
+    // Only store outcomes worth replaying; a 404 or 5xx should simply be retried.
+    if (c.res.status >= 500 || c.res.status === 404) {
       run(ctx.db, 'DELETE FROM idempotency_keys WHERE scope = ?', scope);
       return;
     }

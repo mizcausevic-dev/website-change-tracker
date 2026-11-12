@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Hono } from 'hono';
 import type { Ctx } from '../context.ts';
 import { iso } from '../clock.ts';
@@ -15,6 +16,7 @@ import { enumParam, readJsonObject, validate, type Spec } from '../http/validate
 
 const STATUSES = ['pending', 'approved', 'paused', 'rejected'] as const;
 const MAX_PENDING = 50;
+const MAX_PENDING_PER_CLIENT = 3;
 
 /** Normalizes a URL for identity: lowercase host, no fragment, no default port. Returns an error message or the URL. */
 export function normalizeUrl(raw: string): { url?: string; error?: string } {
@@ -99,12 +101,21 @@ export function registerSources(app: Hono<Env>, ctx: Ctx): void {
       if (dup) throw Problems.conflict('duplicate-source', 'Source already exists', `A source for ${url} already exists.`, { existing: { id: dup.id, href: `${base}/v1/sources/${dup.id}` } });
       const pending = one<{ n: number }>(ctx.db, "SELECT COUNT(*) AS n FROM sources WHERE status = 'pending'")!.n;
       if (pending >= MAX_PENDING) throw Problems.conflict('review-queue-full', 'Review queue is full', `There are already ${MAX_PENDING} sources awaiting review.`);
+      // Proposal-only keys are shared (the demo key is public), so cap pending proposals per key-and-client
+      // or one visitor could fill the global queue for everyone.
+      const fp = createHash('sha256').update(`${key.id}:${c.get('clientIp')}`).digest('hex').slice(0, 32);
+      if (!key.scopes.includes('sources:write')) {
+        const mine = one<{ n: number }>(ctx.db, "SELECT COUNT(*) AS n FROM sources WHERE status = 'pending' AND proposer_fp = ?", fp)!.n;
+        if (mine >= MAX_PENDING_PER_CLIENT) {
+          throw new ApiError(429, 'proposal-limit', 'Too many pending proposals', `Each client may have ${MAX_PENDING_PER_CLIENT} proposals awaiting review.`, {}, { 'Retry-After': '1800' });
+        }
+      }
       const id = newId('src', now);
-      run(ctx.db, `INSERT INTO sources (id, url, name, status, tags, selector, ignore_selectors, ignore_patterns, check_interval_minutes, min_significance, notes, proposed_by, created_at, updated_at)
-                   VALUES (?,?,?, 'pending', ?,?,?,?,?,?,?,?,?,?)`,
+      run(ctx.db, `INSERT INTO sources (id, url, name, status, tags, selector, ignore_selectors, ignore_patterns, check_interval_minutes, min_significance, notes, proposed_by, proposer_fp, created_at, updated_at)
+                   VALUES (?,?,?, 'pending', ?,?,?,?,?,?,?,?,?,?,?)`,
         id, url, String(value.name).trim(), JSON.stringify(value.tags ?? []), (value.selector as string | null) ?? null,
         JSON.stringify(value.ignore_selectors ?? []), JSON.stringify(value.ignore_patterns ?? []),
-        (value.check_interval_minutes as number) ?? 60, (value.min_significance as number) ?? 20, (value.notes as string | null) ?? null, key.name, iso(now), iso(now));
+        (value.check_interval_minutes as number) ?? 60, (value.min_significance as number) ?? 20, (value.notes as string | null) ?? null, key.name, fp, iso(now), iso(now));
       return one<Row>(ctx.db, 'SELECT * FROM sources WHERE id = ?', id)!;
     });
     const out = sourceOut(created, base);

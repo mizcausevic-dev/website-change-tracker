@@ -44,7 +44,8 @@ const lastTouched = new Map<string, number>();
 
 export function authenticate(db: Db, header: string | undefined, now: number): ApiKey {
   if (!header) throw Problems.unauthenticated('Send an API key as "Authorization: Bearer <key>". The public demo key is in the README.');
-  const m = /^Bearer\s+([A-Za-z0-9_\-]{16,128})$/.exec(header.trim());
+  // RFC 6750 b64token characters, so keys made with base64 (+, /, =) or base64url both work.
+  const m = /^Bearer\s+([A-Za-z0-9_\-.~+/]{16,128}=*)$/.exec(header.trim());
   if (!m) throw Problems.unauthenticated('Malformed Authorization header. Expected "Bearer <key>".', 'invalid_request');
   const row = one<{ id: string; name: string; scopes: string; rate_limit_per_min: number }>(db, 'SELECT id, name, scopes, rate_limit_per_min FROM api_keys WHERE hash = ?', hash(m[1]!));
   if (!row) throw Problems.unauthenticated('The API key is not recognized.', 'invalid_token');

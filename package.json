@@ -16,7 +16,7 @@
     "check": "npm run typecheck && npm test"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.5",
+    "@hono/node-server": "2.1.6",
     "diff": "9.0.0",
     "hono": "4.13.14",
     "node-html-parser": "9.0.5"

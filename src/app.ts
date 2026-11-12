@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { Ctx } from './context.ts';
@@ -26,8 +27,14 @@ export function buildApp(ctx: Ctx): Hono<Env> {
     exposeHeaders: ['ETag', 'Link', 'Location', 'Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Idempotent-Replayed', 'X-Request-Id'],
     maxAge: 600,
   }));
-  app.use('/v1', authAndRateLimit(ctx, limiter));
+  // '/v1/*' also matches '/v1', so this is registered once (registering both charged two tokens).
   app.use('/v1/*', authAndRateLimit(ctx, limiter));
+  // Cap bodies while streaming, before anything buffers them. A declared Content-Length check alone
+  // misses chunked bodies, which would otherwise be read in full first.
+  app.use('/v1/*', bodyLimit({
+    maxSize: 64 * 1024,
+    onError: () => { throw new ApiError(413, 'payload-too-large', 'Request body too large', 'Bodies are limited to 65536 bytes.'); },
+  }));
   app.use('/v1/*', conditionalGet());
   app.use('/v1/*', idempotency(ctx));
 
