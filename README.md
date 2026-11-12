@@ -11,7 +11,7 @@ The demo tracks fictional sites on the reserved `.example` domain, served by the
 | Word-level diff with the scoring signals | API reference rendered from the live OpenAPI document |
 |---|---|
 | ![Diff drawer](docs/screenshots/diff-drawer.png) | ![API reference](docs/screenshots/api-reference.png) |
-| **Swiss Architect theme, light** (7 themes × light/dark) | **375 px phone layout** |
+| **Swiss Architect theme, light** (7 themes × light/dark) | **390 px phone layout** |
 | ![Swiss theme](docs/screenshots/dashboard-swiss-light.png) | ![Mobile](docs/screenshots/mobile.png) |
 
 ## Try the API
@@ -140,7 +140,7 @@ gcloud run deploy website-change-tracker --source . --region us-east1 \
   --set-env-vars PUBLIC_BASE_URL=<service url>,TRUST_PROXY=true
 ```
 
-- `--max-instances 1` matters: the rate limiter, idempotency store and scheduler are in-process. With `--min-instances 0` the service scales to zero when idle and reseeds the same deterministic history on the next cold start; the scheduler only runs while the instance is serving.
+- `--max-instances 1` matters: the rate limiter, idempotency store and scheduler are in-process. With `--min-instances 0` the service scales to zero when idle and reseeds the same deterministic history on the next cold start. On Cloud Run that replay takes about 6 to 7 seconds (measured from the boot log), so the first request after an idle period is slow; `--min-instances 1` removes the wait at the cost of an always-on instance. The scheduler only runs while the instance is serving.
 - The public demo runs **without** an admin key, so approving, editing and webhook management are unreachable there. To enable them, store a key in Secret Manager, grant the runtime service account `roles/secretmanager.secretAccessor` on that one secret (not the project), and add `--set-secrets ADMIN_API_KEY=<secret>:<version>`.
 - `TRUST_PROXY=true` belongs in the service config, not the image: it is only correct behind a proxy that appends the client address to `X-Forwarded-For`.
 
