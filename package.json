@@ -1,0 +1,30 @@
+{
+  "name": "website-change-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Driftline: a REST API and dashboard that tracks meaningful changes across approved websites, stores snapshots, shows diffs, and sends digests.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24.11"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.5",
+    "diff": "9.0.0",
+    "hono": "4.13.14",
+    "node-html-parser": "9.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "typescript": "6.0.3"
+  }
+}

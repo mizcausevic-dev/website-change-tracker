@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions pinned to full commit SHAs; the tag is in the trailing comment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.11.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run typecheck
+      - run: npm test
+      - name: Container builds and serves
+        run: |
+          docker build -t driftline:ci .
+          docker run -d --name driftline -p 8080:8080 driftline:ci
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/readyz && break; sleep 1; done
+          curl -sf http://localhost:8080/v1 | grep -q '"api_root"'
+          curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/v1/sources | grep -q 401
+          docker logs driftline | tail -5

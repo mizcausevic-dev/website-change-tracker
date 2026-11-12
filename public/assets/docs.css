@@ -1,0 +1,25 @@
+.docs { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 32px; max-width: 1240px; margin: 0 auto; padding: 24px; }
+.toc { position: sticky; top: 72px; align-self: start; max-height: calc(100vh - 90px); overflow: auto; font-size: 13.5px; display: grid; gap: 2px; }
+.toc a { color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: var(--radius-sm); }
+.toc a:hover { color: var(--text); background: var(--panel-2); }
+.toc .group { margin-top: 10px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); padding: 0 8px; }
+.content { min-width: 0; }
+.content h1 { font-size: 30px; letter-spacing: -.02em; }
+.content h2 { font-size: 20px; margin-top: 36px; padding-top: 8px; }
+.content section { scroll-margin-top: 70px; }
+.content p { max-width: 74ch; }
+.lead { font-size: 16.5px; color: var(--muted); }
+.op { background: var(--panel); border: var(--border-w) solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin: 14px 0; scroll-margin-top: 70px; box-shadow: var(--shadow); }
+.op h3 { display: flex; gap: 10px; align-items: center; font-size: 15px; flex-wrap: wrap; }
+.op h3 code { font-size: 14px; overflow-wrap: anywhere; }
+.verb { font: 600 11.5px var(--mono); padding: 3px 7px; border-radius: 5px; color: #fff; }
+.verb.get { background: #2f7d4f; } .verb.post { background: #2f5fe0; } .verb.patch { background: #b26b00; } .verb.delete { background: #b42318; }
+.op .summary { color: var(--muted); margin: 6px 0 10px; }
+.op table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 10px; }
+.op th, .op td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+.op th { color: var(--muted); font-weight: 500; }
+.codes { display: flex; flex-wrap: wrap; gap: 6px; }
+.code-pill { font: 12px var(--mono); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); }
+.code-pill.c2 { color: var(--ok); } .code-pill.c3 { color: var(--accent); } .code-pill.c4 { color: var(--warn); } .code-pill.c5 { color: var(--bad); }
+.scope { font: 12px var(--mono); color: var(--accent); }
+@media (max-width: 900px) { .docs { grid-template-columns: minmax(0, 1fr); padding: 16px; } .toc { position: static; max-height: none; } }

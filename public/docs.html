@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en" data-theme="bento" data-mode="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driftline API reference</title>
+<meta name="description" content="REST API reference for Driftline, a website change tracker: sources, snapshots, changes, check runs, digests, webhooks, and the conventions they share.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f5fe0'/%3E%3Cpath d='M7 22 L14 9 L18 17 L21 12 L25 22' fill='none' stroke='white' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/assets/app.css">
+<link rel="stylesheet" href="/assets/docs.css">
+<script src="/assets/theme-boot.js"></script>
+<script src="/assets/docs.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Driftline home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M7 22 L14 9 L18 17 L21 12 L25 22" fill="none" stroke="var(--accent-ink)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg>
+    <b>Driftline</b><span>API reference</span>
+  </a>
+  <nav class="topnav" aria-label="Primary">
+    <a href="/">Dashboard</a>
+    <a href="/docs" aria-current="page">API reference</a>
+    <a href="/brief">Product brief</a>
+    <a href="https://github.com/mizcausevic-dev/website-change-tracker" rel="noopener">GitHub</a>
+  </nav>
+  <div class="controls">
+    <label class="sr-only" for="theme">Theme</label>
+    <select id="theme"><option value="bento">Bento Grid</option><option value="swiss">Swiss Architect</option><option value="cosmic">Cosmic Cyber</option><option value="aqua">Aqua Web 2.0</option><option value="brutalist">Pop Brutalist</option><option value="steel">Steel Tactical</option><option value="parchment">Parchment</option></select>
+    <button class="btn icon-btn" id="mode" type="button" aria-label="Toggle dark mode">◐</button>
+  </div>
+</header>
+
+<div class="docs">
+  <nav class="toc" id="toc" aria-label="Contents"></nav>
+  <article class="content">
+    <h1>Driftline REST API</h1>
+    <p class="lead">Track an approved list of web pages, store normalized snapshots, score every change for significance, and deliver digests and signed webhooks. Base URL: <code id="base"></code>. Machine-readable description: <a href="/v1/openapi.json">OpenAPI 3.1</a>.</p>
+
+    <section id="quickstart"><h2>Quickstart</h2>
+<pre class="code" id="qs"></pre>
+    </section>
+
+    <section id="auth"><h2>Authentication and scopes</h2>
+      <p>Send an API key as <code>Authorization: Bearer &lt;key&gt;</code>. Keys are stored as SHA-256 hashes, so a database leak does not leak usable credentials. Each key carries scopes; a request without the right one gets <code>403</code> with <code>WWW-Authenticate: Bearer error="insufficient_scope", scope="…"</code> (RFC 6750).</p>
+      <p>The public demo key <code>wct_demo_public_explorer_key</code> has <code>sources:read</code>, <code>sources:propose</code>, <code>changes:read</code>, <code>checks:run</code>, <code>digests:read</code> and <code>stats:read</code>. Approving sources, editing them, and managing webhooks need an admin key.</p>
+    </section>
+
+    <section id="errors"><h2>Errors</h2>
+      <p>Every error is an RFC 9457 problem document with <code>Content-Type: application/problem+json</code>. Switch on <code>type</code>, not on <code>title</code>. <code>request_id</code> matches the <code>X-Request-Id</code> response header and the server log line.</p>
+<pre class="code">{
+  "type": "https://github.com/mizcausevic-dev/website-change-tracker/blob/main/docs/problems.md#validation-error",
+  "title": "Request body failed validation",
+  "status": 422,
+  "detail": "2 field errors.",
+  "instance": "/v1/sources",
+  "request_id": "6c21250a-410a-4daf-8857-0a180a23816f",
+  "errors": [
+    { "field": "url", "message": "must be a public address" },
+    { "field": "min_signficance", "message": "unknown field" }
+  ]
+}</pre>
+      <p>Unknown fields are rejected, not ignored: a typo like <code>min_signficance</code> fails loudly instead of silently using the default.</p>
+    </section>
+
+    <section id="pagination"><h2>Pagination</h2>
+      <p>Lists return <code>{ data, page: { limit, has_more, next_cursor }, links }</code> and an RFC 8288 <code>Link: &lt;…&gt;; rel="next"</code> header. Cursors are opaque. IDs are ULIDs (time-ordered), so the next page is <code>WHERE id &lt; cursor</code>: stable while new rows arrive, unlike offset paging.</p>
+    </section>
+
+    <section id="caching"><h2>Conditional requests and concurrency</h2>
+      <p>Every successful GET has a strong <code>ETag</code>. Send it back in <code>If-None-Match</code> and you get <code>304 Not Modified</code> with an empty body when nothing changed. The dashboard polls this way.</p>
+      <p><code>PATCH /v1/sources/{id}</code> takes <a href="https://www.rfc-editor.org/rfc/rfc7396">JSON Merge Patch</a> and requires <code>If-Match</code>. A missing header is <code>428</code>; a stale one is <code>412</code>, so two editors can't overwrite each other. Status changes are not patchable: they go through the <code>approve</code>, <code>reject</code>, <code>pause</code> and <code>resume</code> actions, which record who reviewed what and when.</p>
+    </section>
+
+    <section id="idempotency"><h2>Idempotency</h2>
+      <p>Every POST accepts <code>Idempotency-Key</code>. A retry with the same key and body replays the first response with <code>Idempotent-Replayed: true</code>; the same key with a different body is <code>422</code>. Keys are scoped to the API key and kept for 24 hours.</p>
+    </section>
+
+    <section id="async"><h2>Asynchronous check runs</h2>
+      <p><code>POST /v1/check-runs</code> returns <code>202 Accepted</code> with <code>Location</code> and <code>Retry-After</code>. Poll the location until <code>status</code> is <code>succeeded</code> or <code>failed</code>. The fetch happens off the request path, so a slow site never ties up an API connection.</p>
+    </section>
+
+    <section id="negotiation"><h2>Content negotiation</h2>
+      <p><code>GET /v1/changes/{id}</code> serves JSON with word-level hunks by default, or a unified diff for <code>Accept: text/x-diff</code>. <code>GET /v1/digests/{id}</code> serves JSON, the email HTML (<code>text/html</code>) or the text part (<code>text/plain</code>). Anything else is <code>406</code>, and responses carry <code>Vary: Accept</code>.</p>
+    </section>
+
+    <section id="limits"><h2>Rate limits</h2>
+      <p>Limits are per key and client, as a token bucket refilled continuously. Responses carry <code>RateLimit-Limit</code>, <code>RateLimit-Remaining</code> and <code>RateLimit-Reset</code> (seconds until the bucket is full). A <code>429</code> carries <code>Retry-After</code>. Failed authentication is limited separately per client to slow key guessing.</p>
+    </section>
+
+    <section id="webhooks"><h2>Webhooks</h2>
+      <p>Events: <code>change.detected</code> (meaningful changes only), <code>digest.ready</code>, <code>check_run.completed</code>. Deliveries are signed with the <a href="https://www.standardwebhooks.com/">Standard Webhooks</a> scheme. The signing secret is shown once, when the endpoint is created. Failed deliveries retry after 1 minute, 5 minutes, 30 minutes, 2 hours and 6 hours, then stop.</p>
+<pre class="code">import { createHmac, timingSafeEqual } from 'node:crypto';
+
+// Verify a Driftline delivery. `secret` is the whsec_… value returned at creation.
+export function verify(secret, headers, rawBody) {
+  const id = headers['webhook-id'], ts = Number(headers['webhook-timestamp']);
+  if (!id || !ts || Math.abs(Date.now() / 1000 - ts) &gt; 300) return false; // reject replays
+  const key = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
+  const expected = Buffer.from('v1,' + createHmac('sha256', key).update(`${id}.${ts}.${rawBody}`).digest('base64'));
+  return headers['webhook-signature'].split(' ').some((sig) =&gt; {
+    const got = Buffer.from(sig);
+    return got.length === expected.length &amp;&amp; timingSafeEqual(got, expected);
+  });
+}</pre>
+    </section>
+
+    <section id="fetching"><h2>How pages are fetched</h2>
+      <p>Only <b>approved</b> sources are fetched. The fetcher identifies itself as <code>DriftlineBot/1.0</code>, obeys robots.txt (RFC 9309), sends <code>If-None-Match</code> / <code>If-Modified-Since</code>, follows at most five redirects on the same site, caps responses at 2 MB after decompression, and resolves DNS through a guard that refuses private, loopback, link-local and metadata addresses at connect time. The guard is checked inside the socket's DNS lookup, so a name that re-resolves to an internal address between validation and connection is still refused.</p>
+      <p>A <b>meaningful</b> change is one whose significance score reaches the source's <code>min_significance</code>. Each change lists the <code>signals</code> behind its score.</p>
+    </section>
+
+    <section id="reference"><h2>Endpoints</h2><div id="ops"><p class="empty">Loading the OpenAPI document…</p></div></section>
+  </article>
+</div>
+</body>
+</html>

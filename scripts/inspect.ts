@@ -1,0 +1,10 @@
+import { harness } from '../test/helpers.ts';
+const h = await harness();
+const j = await (await h.req('GET', '/v1/stats/overview')).json() as any;
+console.log(JSON.stringify(j.totals), '\n', JSON.stringify(j.by_category));
+for (const s of j.sources) console.log(s.name.padEnd(40), s.status, s.checks_7d, s.meaningful_changes_7d, s.last_outcome);
+console.log(j.price_series.map((p: any) => p.key + ': ' + p.points.map((x: any) => x.v).join(' > ')).join('\n'));
+const ch = await (await h.req('GET', '/v1/changes?limit=40')).json() as any;
+for (const c of ch.data) console.log(c.detected_at.slice(0, 16), String(c.significance).padStart(3), c.category.padEnd(8), c.source_name.slice(0, 24).padEnd(24), c.summary);
+const mi = await (await h.req('GET', '/v1/changes?meaningful=false&limit=8')).json() as any;
+for (const c of mi.data) console.log('MINOR', c.significance, c.category, c.source_name.slice(0, 24), '|', c.summary, '|', c.signals.join(' / '));

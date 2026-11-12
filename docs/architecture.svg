@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 430" font-family="IBM Plex Sans, Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Driftline architecture</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10z" fill="#7a818c"/></marker>
+  </defs>
+  <rect width="1000" height="430" rx="16" fill="#16191e"/>
+  <text x="28" y="40" fill="#e6e7ea" font-size="18" font-weight="600">Driftline: one Node 24 process</text>
+  <text x="28" y="62" fill="#a2a8b3" font-size="13">Hono REST API · scheduler · SQLite (node:sqlite) · four runtime dependencies</text>
+
+  <g font-size="13">
+    <!-- top row: the check pipeline -->
+    <rect x="28" y="92" width="150" height="74" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="103" y="122" fill="#e6e7ea" text-anchor="middle" font-weight="600">Scheduler</text>
+    <text x="103" y="142" fill="#a2a8b3" text-anchor="middle">due approved sources</text>
+    <text x="103" y="158" fill="#a2a8b3" text-anchor="middle">±10% jitter</text>
+
+    <rect x="210" y="92" width="170" height="74" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="295" y="122" fill="#e6e7ea" text-anchor="middle" font-weight="600">Fetcher</text>
+    <text x="295" y="142" fill="#a2a8b3" text-anchor="middle">robots.txt · ETag / 304</text>
+    <text x="295" y="158" fill="#a2a8b3" text-anchor="middle">SSRF guard in DNS lookup</text>
+
+    <rect x="412" y="92" width="170" height="74" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="497" y="122" fill="#e6e7ea" text-anchor="middle" font-weight="600">Extractor</text>
+    <text x="497" y="142" fill="#a2a8b3" text-anchor="middle">HTML → structured lines</text>
+    <text x="497" y="158" fill="#a2a8b3" text-anchor="middle">mask clocks, counters, tokens</text>
+
+    <rect x="614" y="92" width="170" height="74" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="699" y="122" fill="#e6e7ea" text-anchor="middle" font-weight="600">Differ + scorer</text>
+    <text x="699" y="142" fill="#a2a8b3" text-anchor="middle">Myers lines + word diff</text>
+    <text x="699" y="158" fill="#a2a8b3" text-anchor="middle">0–100 with signals</text>
+
+    <rect x="816" y="92" width="156" height="74" rx="10" fill="#1e2a4d" stroke="#6f93ff"/>
+    <text x="894" y="122" fill="#e6e7ea" text-anchor="middle" font-weight="600">SQLite</text>
+    <text x="894" y="142" fill="#a2a8b3" text-anchor="middle">sources · snapshots</text>
+    <text x="894" y="158" fill="#a2a8b3" text-anchor="middle">checks · changes</text>
+
+    <!-- outcomes -->
+    <rect x="412" y="206" width="372" height="56" rx="10" fill="#1b1e24" stroke="#3a404a" stroke-dasharray="4 4"/>
+    <text x="428" y="230" fill="#e6e7ea" font-weight="600">Outcome per check</text>
+    <text x="428" y="250" fill="#a2a8b3">baseline · changed · unchanged · noise · not_modified · blocked · error</text>
+
+    <!-- bottom row: delivery + API -->
+    <rect x="28" y="300" width="190" height="96" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="123" y="330" fill="#e6e7ea" text-anchor="middle" font-weight="600">Check runs</text>
+    <text x="123" y="350" fill="#a2a8b3" text-anchor="middle">POST → 202 + Location</text>
+    <text x="123" y="366" fill="#a2a8b3" text-anchor="middle">poll with Retry-After</text>
+
+    <rect x="250" y="300" width="190" height="96" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="345" y="330" fill="#e6e7ea" text-anchor="middle" font-weight="600">Webhooks</text>
+    <text x="345" y="350" fill="#a2a8b3" text-anchor="middle">Standard Webhooks HMAC</text>
+    <text x="345" y="366" fill="#a2a8b3" text-anchor="middle">retries 1m → 6h</text>
+
+    <rect x="472" y="300" width="190" height="96" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="567" y="330" fill="#e6e7ea" text-anchor="middle" font-weight="600">Daily digest</text>
+    <text x="567" y="350" fill="#a2a8b3" text-anchor="middle">email-safe HTML + text</text>
+    <text x="567" y="366" fill="#a2a8b3" text-anchor="middle">optional Resend delivery</text>
+
+    <rect x="694" y="300" width="278" height="96" rx="10" fill="#22262d" stroke="#3a404a"/>
+    <text x="833" y="330" fill="#e6e7ea" text-anchor="middle" font-weight="600">REST API /v1</text>
+    <text x="833" y="350" fill="#a2a8b3" text-anchor="middle">Bearer scopes · problem+json · ETags</text>
+    <text x="833" y="366" fill="#a2a8b3" text-anchor="middle">cursors · Idempotency-Key · rate limits</text>
+    <text x="833" y="382" fill="#a2a8b3" text-anchor="middle">dashboard · docs · your tools</text>
+  </g>
+
+  <g stroke="#7a818c" stroke-width="1.8" fill="none" marker-end="url(#a)">
+    <path d="M178 129 H206"/><path d="M380 129 H408"/><path d="M582 129 H610"/><path d="M784 129 H812"/>
+    <path d="M699 166 V202"/>
+    <path d="M894 166 V296"/>
+    <path d="M520 262 C470 280 380 280 345 296"/>
+    <path d="M567 262 V296"/>
+    <path d="M123 300 V170"/>
+  </g>
+</svg>
