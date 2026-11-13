@@ -136,6 +136,7 @@ export function webhookOut(r: R, base: string) {
     url: r.url,
     description: s(r.description),
     events: parseJson<string[]>(r.events, []),
+    filter: parseJson<Record<string, unknown>>(r.filter, {}),
     active: r.active === 1,
     secret_hint: `${secret.slice(0, 10)}…`,
     created_at: r.created_at,

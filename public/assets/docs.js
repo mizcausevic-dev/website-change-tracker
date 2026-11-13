@@ -63,7 +63,7 @@ curl -si -X POST ${origin}/v1/check-runs -H "Authorization: Bearer $KEY" \\
     }
   }
   const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  const intro = [['quickstart', 'Quickstart'], ['auth', 'Authentication'], ['errors', 'Errors'], ['pagination', 'Pagination'], ['caching', 'Conditional requests'], ['idempotency', 'Idempotency'], ['async', 'Async check runs'], ['negotiation', 'Content negotiation'], ['limits', 'Rate limits'], ['webhooks', 'Webhooks'], ['fetching', 'How pages are fetched']];
+  const intro = [['quickstart', 'Quickstart'], ['auth', 'Authentication'], ['errors', 'Errors'], ['pagination', 'Pagination'], ['caching', 'Conditional requests'], ['idempotency', 'Idempotency'], ['async', 'Async check runs'], ['negotiation', 'Content negotiation'], ['limits', 'Rate limits'], ['webhooks', 'Webhooks'], ['filters', 'Webhook filters'], ['preview', 'Ignore-rule preview'], ['feedback', 'Feedback'], ['export', 'Change history export'], ['fetching', 'How pages are fetched']];
   let toc = `<div class="group">Guide</div>${intro.map(([id, t]) => `<a href="#${id}">${t}</a>`).join('')}`;
   let html = '';
   for (const [tag, ops] of byTag) {

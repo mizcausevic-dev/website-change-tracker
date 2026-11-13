@@ -5,7 +5,7 @@ import { newId } from '../ids.ts';
 import { Problems } from './problem.ts';
 
 export const SCOPES = [
-  'sources:read', 'sources:propose', 'sources:write', 'sources:approve', 'changes:read',
+  'sources:read', 'sources:propose', 'sources:write', 'sources:approve', 'changes:read', 'changes:feedback', 'changes:export',
   'checks:run', 'digests:read', 'digests:write', 'webhooks:manage', 'stats:read',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -19,7 +19,8 @@ export interface ApiKey {
 
 /** Published in the README so anyone can explore the live demo. Read-only plus proposing sources and running checks. */
 export const DEMO_KEY = 'wct_demo_public_explorer_key';
-export const DEMO_SCOPES: Scope[] = ['sources:read', 'sources:propose', 'changes:read', 'checks:run', 'digests:read', 'stats:read'];
+// The demo data is fictional, so visitors may also label changes and export history.
+export const DEMO_SCOPES: Scope[] = ['sources:read', 'sources:propose', 'changes:read', 'changes:feedback', 'changes:export', 'checks:run', 'digests:read', 'stats:read'];
 
 const hash = (secret: string): string => createHash('sha256').update(secret).digest('hex');
 

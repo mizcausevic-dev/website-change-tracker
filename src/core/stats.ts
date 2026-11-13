@@ -115,6 +115,7 @@ export function overview(db: Db, now: number, days: number) {
       daily_max_significance: heat.get(s.id) ?? [],
     })),
     price_series: priceSeries,
+    feedback: feedbackPrecision(db),
   };
 }
 
@@ -123,4 +124,38 @@ function asOf(db: Db, now: number): string {
     `SELECT MAX(t) AS t FROM (SELECT MAX(started_at) AS t FROM checks UNION ALL SELECT MAX(detected_at) FROM changes
        UNION ALL SELECT MAX(created_at) FROM deliveries UNION ALL SELECT MAX(updated_at) FROM sources)`)[0];
   return r?.t ?? iso(now);
+}
+
+/**
+ * Precision of the meaningful flag, from human labels only. With no labels every figure is null:
+ * the dashboard shows an empty state rather than an invented number.
+ *  - precision: of labels on changes flagged meaningful, the share that agreed.
+ *  - missed: labels saying a change below the threshold should have been meaningful.
+ */
+function feedbackPrecision(db: Db) {
+  const rows = all<{ category: string; meaningful: number; verdict: string; n: number }>(db,
+    `SELECT c.category, c.meaningful, f.verdict, COUNT(*) AS n FROM feedback f JOIN changes c ON c.id = f.change_id GROUP BY c.category, c.meaningful, f.verdict`);
+  const by: Record<string, { flagged_labels: number; agreed: number; precision: number | null; minor_labels: number; missed: number }> = {};
+  for (const cat of CATEGORIES) by[cat] = { flagged_labels: 0, agreed: 0, precision: null, minor_labels: 0, missed: 0 };
+  for (const r of rows) {
+    const b = by[r.category] ?? (by[r.category] = { flagged_labels: 0, agreed: 0, precision: null, minor_labels: 0, missed: 0 });
+    if (r.meaningful) {
+      b.flagged_labels += r.n;
+      if (r.verdict === 'meaningful') b.agreed += r.n;
+    } else {
+      b.minor_labels += r.n;
+      if (r.verdict === 'meaningful') b.missed += r.n;
+    }
+  }
+  let flagged = 0;
+  let agreed = 0;
+  let labels = 0;
+  for (const b of Object.values(by)) {
+    b.precision = b.flagged_labels ? Math.round((b.agreed / b.flagged_labels) * 1000) / 1000 : null;
+    flagged += b.flagged_labels;
+    agreed += b.agreed;
+    labels += b.flagged_labels + b.minor_labels;
+  }
+  const labellers = all<{ n: number }>(db, 'SELECT COUNT(DISTINCT client_fp) AS n FROM feedback')[0]?.n ?? 0;
+  return { labels, labellers, precision: flagged ? Math.round((agreed / flagged) * 1000) / 1000 : null, by_category: by };
 }

@@ -10,8 +10,8 @@ import { authAndRateLimit, conditionalGet, idempotency, requestContext, type Env
 import { ApiError, problemBody } from './http/problem.ts';
 import { RateLimiter } from './http/ratelimit.ts';
 import { buildOpenApi } from './openapi.ts';
-import { registerActivity } from './routes/activity.ts';
-import { registerSources } from './routes/sources.ts';
+import { registerActivity, registerFeedback } from './routes/activity.ts';
+import { registerIgnorePreview, registerSources } from './routes/sources.ts';
 
 const PUBLIC_DIR = path.resolve(import.meta.dirname, '..', 'public');
 
@@ -24,7 +24,7 @@ export function buildApp(ctx: Ctx): Hono<Env> {
     origin: '*',
     allowMethods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'If-Match', 'If-None-Match', 'X-Request-Id'],
-    exposeHeaders: ['ETag', 'Link', 'Location', 'Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Idempotent-Replayed', 'X-Request-Id'],
+    exposeHeaders: ['ETag', 'Link', 'Location', 'Retry-After', 'Content-Disposition', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Idempotent-Replayed', 'X-Request-Id'],
     maxAge: 600,
   }));
   // '/v1/*' also matches '/v1', so this is registered once (registering both charged two tokens).
@@ -64,6 +64,8 @@ export function buildApp(ctx: Ctx): Hono<Env> {
 
   registerSources(app, ctx);
   registerActivity(app, ctx, limiter);
+  registerIgnorePreview(app, ctx, limiter);
+  registerFeedback(app, ctx);
 
   // Fictional demo sites, viewable in a browser at their current state.
   app.get('/demo-sites', (c) => c.json({ sites: SITES.map((s) => ({ host: s.host, name: s.name, paths: Object.keys(s.routes), view: Object.keys(s.routes).map((p) => `/demo-sites/${s.host}${p}`) })) }));

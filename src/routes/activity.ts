@@ -8,9 +8,9 @@ import { createDigest } from '../core/digest.ts';
 import { createRun } from '../core/scheduler.ts';
 import { CATEGORIES } from '../core/significance.ts';
 import { overview } from '../core/stats.ts';
-import { deliverDue, EVENT_TYPES, generateSecret } from '../core/webhooks.ts';
+import { deliverDue, deliverOne, enqueueTest, EVENT_TYPES, generateSecret, type WebhookFilter } from '../core/webhooks.ts';
 import { DEMO_KEY, requireScope, SCOPES } from '../http/auth.ts';
-import type { Env } from '../http/middleware.ts';
+import { clientFingerprint, etagFor, etagMatches, type Env } from '../http/middleware.ts';
 import { page, pageParams } from '../http/pagination.ts';
 import { ApiError, Problems } from '../http/problem.ts';
 import type { RateLimiter } from '../http/ratelimit.ts';
@@ -45,7 +45,7 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
     c.json({
       object: 'api_root',
       name: 'Driftline website change tracker',
-      version: '1.0.0',
+      version: '1.1.0',
       documentation: `${base}/docs`,
       openapi: `${base}/v1/openapi.json`,
       authentication: { scheme: 'Bearer', demo_key: ctx.config.demoMode ? DEMO_KEY : null, scopes: SCOPES },
@@ -57,9 +57,17 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
   );
 
   // ------------------------------------------------------------------ changes
+  // One collection, three representations: JSON (the paged envelope), CSV and NDJSON for exports.
+  // Exports page the same way, with bigger pages and the cursor only in the Link header.
+  const CHANGE_TYPES = ['application/json', 'text/csv', 'application/x-ndjson'];
   app.get('/v1/changes', (c) => {
     requireScope(c.get('key')!, 'changes:read');
-    const { limit, before } = pageParams(c);
+    c.header('Vary', 'Accept');
+    const type = negotiate(c.req.header('accept'), CHANGE_TYPES);
+    if (!type) throw notAcceptable(CHANGE_TYPES);
+    const exporting = type !== 'application/json';
+    if (exporting) requireScope(c.get('key')!, 'changes:export');
+    const { limit, before } = exporting ? pageParams(c, 500, 1000) : pageParams(c);
     const category = enumParam(c, 'category', CATEGORIES);
     const meaningful = enumParam(c, 'meaningful', ['true', 'false', 'any'] as const) ?? 'true';
     const minSig = intParam(c, 'min_significance', 0, 0, 100);
@@ -76,8 +84,21 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
     if (until) (where.push('c.detected_at < ?'), params.push(until));
     if (sourceId) (where.push('c.source_id = ?'), params.push(sourceId));
     const rows = all<Row & { id: string }>(ctx.db,
-      `SELECT c.*, s.name AS source_name FROM changes c JOIN sources s ON s.id = c.source_id WHERE ${where.join(' AND ')} ORDER BY c.id DESC LIMIT ?`, ...params, limit + 1);
-    return c.json(page(c, base, rows, limit, (r) => changeOut(r, base, false)));
+      `SELECT c.*, s.name AS source_name, s.url AS source_url FROM changes c JOIN sources s ON s.id = c.source_id WHERE ${where.join(' AND ')} ORDER BY c.id DESC LIMIT ?`, ...params, limit + 1);
+    const envelope = page(c, base, rows, limit, (r) => changeOut(r, base, false)); // also sets the Link header
+    if (!exporting) return c.json(envelope);
+    const day = new Date(ctx.clock.now()).toISOString().slice(0, 10);
+    const items = rows.slice(0, limit);
+    if (type === 'text/csv') {
+      return c.body(toCsv(items), 200, {
+        'Content-Type': 'text/csv; charset=utf-8; header=present',
+        'Content-Disposition': `attachment; filename="driftline-changes-${day}.csv"`,
+      });
+    }
+    return c.body(envelope.data.map((r) => JSON.stringify(r)).join('\n') + (items.length ? '\n' : ''), 200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Content-Disposition': `attachment; filename="driftline-changes-${day}.ndjson"`,
+    });
   });
 
   app.get('/v1/changes/:id', (c) => {
@@ -195,18 +216,22 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
   app.post('/v1/webhooks', async (c) => {
     requireScope(c.get('key')!, 'webhooks:manage');
     const body = await readJsonObject(c);
-    const { value, errors } = validate(body, {
+    const { filter: rawFilter, ...rest } = body;
+    const { value, errors } = validate(rest, {
       url: { type: 'string', required: true, maxLength: 2048, check: (v: string) => (v.startsWith('https://') ? normalizeUrl(v).error ?? null : 'must be an https URL') },
       events: { type: 'string[]', required: true, maxItems: EVENT_TYPES.length, enum: EVENT_TYPES },
       description: { type: 'string', maxLength: 200, nullable: true },
     });
+    const f = rawFilter === undefined || rawFilter === null ? { filter: {}, errors: [] } : validateFilter(rawFilter);
+    errors.push(...f.errors);
     if (errors.length) throw Problems.validation(errors);
     if (!(value.events as string[]).length) throw Problems.validation([{ field: 'events', message: 'must list at least one event type' }]);
     const now = ctx.clock.now();
     const id = newId('whk', now);
     const secret = generateSecret();
-    run(ctx.db, 'INSERT INTO webhooks (id, url, description, secret, events, active, created_at) VALUES (?,?,?,?,?,1,?)',
-      id, normalizeUrl(String(value.url)).url!, (value.description as string | null) ?? null, secret, JSON.stringify([...new Set(value.events as string[])]), iso(now));
+    run(ctx.db, 'INSERT INTO webhooks (id, url, description, secret, events, filter, active, created_at) VALUES (?,?,?,?,?,?,1,?)',
+      id, normalizeUrl(String(value.url)).url!, (value.description as string | null) ?? null, secret, JSON.stringify([...new Set(value.events as string[])]),
+      JSON.stringify(f.filter), iso(now));
     const out = { ...webhookOut(loadHook(id), base), secret };
     c.header('Location', out.links.self);
     c.header('Cache-Control', 'no-store');
@@ -216,6 +241,64 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
   app.get('/v1/webhooks/:id', (c) => {
     requireScope(c.get('key')!, 'webhooks:manage');
     return c.json(webhookOut(loadHook(c.req.param('id')), base));
+  });
+
+  // JSON Merge Patch (RFC 7396) with optimistic concurrency, like sources. `filter` merges key by
+  // key; setting a filter key to null removes it, and `"filter": null` clears the whole filter.
+  app.patch('/v1/webhooks/:id', async (c) => {
+    requireScope(c.get('key')!, 'webhooks:manage');
+    const row = loadHook(c.req.param('id'));
+    const ifMatch = c.req.header('if-match');
+    if (!ifMatch) throw new ApiError(428, 'precondition-required', 'If-Match header required', 'Send the ETag from your last GET as If-Match.');
+    const current = etagFor(JSON.stringify(webhookOut(row, base)));
+    if (!etagMatches(ifMatch, current, false)) throw new ApiError(412, 'precondition-failed', 'Webhook changed since you read it', 'Re-fetch it and retry with the new ETag.', { current_etag: current });
+    const body = await readJsonObject(c, ['application/merge-patch+json']);
+    for (const ro of ['url', 'id', 'secret']) if (ro in body) throw Problems.validation([{ field: ro, message: ro === 'url' ? 'is read-only; create a new webhook for a new URL' : 'is read-only' }]);
+    const { filter: rawFilter, ...rest } = body;
+    const { value, errors } = validate(rest, {
+      events: { type: 'string[]', maxItems: EVENT_TYPES.length, enum: EVENT_TYPES, check: (v: string[]) => (v.length ? null : 'must list at least one event type') },
+      description: { type: 'string', maxLength: 200, nullable: true },
+      active: { type: 'boolean' },
+    }, true);
+    let filter = JSON.parse(String(row.filter)) as Record<string, unknown>;
+    if (rawFilter === null) filter = {};
+    else if (rawFilter !== undefined) {
+      if (typeof rawFilter !== 'object' || Array.isArray(rawFilter)) errors.push({ field: 'filter', message: 'must be an object or null' });
+      else {
+        for (const [k, v] of Object.entries(rawFilter as Record<string, unknown>)) {
+          if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
+            errors.push({ field: `filter.${k}`, message: 'unknown field' });
+            continue;
+          }
+          if (v === null) delete filter[k];
+          else filter[k] = v;
+        }
+        const f = validateFilter(filter);
+        errors.push(...f.errors);
+        filter = f.filter as Record<string, unknown>;
+      }
+    }
+    if (errors.length) throw Problems.validation(errors);
+    run(ctx.db, `UPDATE webhooks SET events = COALESCE(?, events), description = CASE WHEN ? THEN ? ELSE description END,
+                 active = COALESCE(?, active), filter = ? WHERE id = ?`,
+      value.events ? JSON.stringify([...new Set(value.events as string[])]) : null, 'description' in value ? 1 : 0, (value.description as string | null) ?? null,
+      value.active === undefined ? null : value.active ? 1 : 0, JSON.stringify(filter), String(row.id));
+    const out = webhookOut(loadHook(String(row.id)), base);
+    const json = JSON.stringify(out);
+    c.header('ETag', etagFor(json));
+    return c.body(json, 200, { 'Content-Type': 'application/json' });
+  });
+
+  // Send a signed `webhook.test` event now and report the attempt. Useful to check a receiver's
+  // signature verification without waiting for a real change.
+  app.post('/v1/webhooks/:id/test', async (c) => {
+    requireScope(c.get('key')!, 'webhooks:manage');
+    const row = loadHook(c.req.param('id'));
+    const now = ctx.clock.now();
+    const deliveryId = enqueueTest(ctx.db, now, String(row.id));
+    await deliverOne(ctx.db, ctx.transport, ctx.clock.now(), deliveryId);
+    const d = one<Row>(ctx.db, 'SELECT * FROM deliveries WHERE id = ?', deliveryId)!;
+    return c.json(deliveryOut(d), 201);
   });
 
   app.delete('/v1/webhooks/:id', (c) => {
@@ -243,4 +326,130 @@ export function registerActivity(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter)
     const deliveries = all<Row>(ctx.db, `SELECT d.* FROM deliveries d ORDER BY d.id DESC LIMIT 8`).map(deliveryOut);
     return c.json({ ...out, recent_deliveries: deliveries, receiver: { verified: ctx.receiver.received.filter((r) => r.verified && !r.duplicate).length, duplicates: ctx.receiver.received.filter((r) => r.duplicate).length, rejected: ctx.receiver.received.filter((r) => !r.verified).length } });
   });
+}
+
+/** Validate a webhook filter object field by field; returns the cleaned filter. */
+export function validateFilter(raw: unknown): { filter: WebhookFilter; errors: Array<{ field: string; message: string }> } {
+  const errors: Array<{ field: string; message: string }> = [];
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { filter: {}, errors: [{ field: 'filter', message: 'must be an object' }] };
+  const r = raw as Record<string, unknown>;
+  const out: WebhookFilter = {};
+  for (const k of Object.keys(r)) if (!['min_significance', 'categories', 'source_ids', 'tags'].includes(k)) errors.push({ field: `filter.${k}`, message: 'unknown field' });
+  const list = (k: 'categories' | 'source_ids' | 'tags', ok: (s: string) => boolean, msg: string): void => {
+    const v = r[k];
+    if (v === undefined) return;
+    if (!Array.isArray(v) || v.length > 20 || v.some((x) => typeof x !== 'string' || !ok(x))) errors.push({ field: `filter.${k}`, message: msg });
+    else if (v.length) out[k] = [...new Set(v as string[])];
+  };
+  if (r.min_significance !== undefined) {
+    const m = r.min_significance;
+    if (typeof m !== 'number' || !Number.isInteger(m) || m < 0 || m > 100) errors.push({ field: 'filter.min_significance', message: 'must be an integer from 0 to 100' });
+    else out.min_significance = m;
+  }
+  list('categories', (s) => (CATEGORIES as readonly string[]).includes(s), `must be an array of up to 20 of: ${CATEGORIES.join(', ')}`);
+  list('source_ids', (s) => isId(s, 'src'), 'must be an array of up to 20 source IDs');
+  list('tags', (s) => /^[a-z0-9][a-z0-9-]{0,31}$/.test(s), 'must be an array of up to 20 tags');
+  return { filter: out, errors };
+}
+
+/**
+ * Feedback on the meaningful flag: one verdict per client per change, as a sub-resource the client
+ * owns. PUT is naturally idempotent (201 on create, 200 on replace); GET and DELETE address the same
+ * resource. These labels are the only input to the precision figures in the stats overview.
+ */
+const FEEDBACK_PER_CHANGE = 200;
+const FEEDBACK_TOTAL = 5000;
+
+export function registerFeedback(app: Hono<Env>, ctx: Ctx): void {
+  const base = ctx.config.publicBaseUrl;
+  const loadChange = (id: string): Row => {
+    const row = isId(id, 'chg') ? one<Row>(ctx.db, 'SELECT id, meaningful, category FROM changes WHERE id = ?', id) : undefined;
+    if (!row) throw Problems.notFound('Change', id);
+    return row;
+  };
+  const out = (f: Row, change: Row) => ({
+    object: 'feedback',
+    change_id: f.change_id,
+    verdict: f.verdict,
+    agrees_with_flag: (f.verdict === 'meaningful') === (change.meaningful === 1),
+    note: f.note ?? null,
+    suggested_ignore_pattern: f.suggested_ignore_pattern ?? null,
+    created_at: f.created_at,
+    updated_at: f.updated_at,
+    links: { self: `${base}/v1/changes/${f.change_id}/feedback`, change: `${base}/v1/changes/${f.change_id}` },
+  });
+
+  app.put('/v1/changes/:id/feedback', async (c) => {
+    requireScope(c.get('key')!, 'changes:feedback');
+    const change = loadChange(c.req.param('id'));
+    const body = await readJsonObject(c);
+    const { value, errors } = validate(body, {
+      verdict: { type: 'string', required: true, enum: ['meaningful', 'not_meaningful'] },
+      note: { type: 'string', maxLength: 500, nullable: true },
+      suggested_ignore_pattern: { type: 'string', maxLength: 200, nullable: true },
+    });
+    if (errors.length) throw Problems.validation(errors);
+    const fp = clientFingerprint(c);
+    const now = iso(ctx.clock.now());
+    const existed = one(ctx.db, 'SELECT 1 AS x FROM feedback WHERE change_id = ? AND client_fp = ?', String(change.id), fp);
+    if (!existed) {
+      // Labels are cheap to submit with a shared key, so storage is bounded per change and overall.
+      const perChange = one<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM feedback WHERE change_id = ?', String(change.id))!.n;
+      const total = one<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM feedback')!.n;
+      if (perChange >= FEEDBACK_PER_CHANGE || total >= FEEDBACK_TOTAL) {
+        throw new ApiError(429, 'feedback-limit', 'Feedback limit reached', perChange >= FEEDBACK_PER_CHANGE ? `This change already has ${FEEDBACK_PER_CHANGE} labels.` : 'The feedback store is full; older labels expire after 24 hours on the demo.', {}, { 'Retry-After': '3600' });
+      }
+    }
+    run(ctx.db, `INSERT INTO feedback (change_id, client_fp, verdict, note, suggested_ignore_pattern, created_at, updated_at) VALUES (?,?,?,?,?,?,?)
+                 ON CONFLICT (change_id, client_fp) DO UPDATE SET verdict = excluded.verdict, note = excluded.note,
+                 suggested_ignore_pattern = excluded.suggested_ignore_pattern, updated_at = excluded.updated_at`,
+      String(change.id), fp, String(value.verdict), (value.note as string | null) ?? null, (value.suggested_ignore_pattern as string | null) ?? null, now, now);
+    const f = one<Row>(ctx.db, 'SELECT * FROM feedback WHERE change_id = ? AND client_fp = ?', String(change.id), fp)!;
+    const res = out(f, change);
+    if (!existed) c.header('Location', res.links.self);
+    return c.json(res, existed ? 200 : 201);
+  });
+
+  app.get('/v1/changes/:id/feedback', (c) => {
+    requireScope(c.get('key')!, 'changes:feedback');
+    const change = loadChange(c.req.param('id'));
+    const f = one<Row>(ctx.db, 'SELECT * FROM feedback WHERE change_id = ? AND client_fp = ?', String(change.id), clientFingerprint(c));
+    if (!f) throw Problems.notFound('Feedback from this client for change', String(change.id));
+    return c.json(out(f, change));
+  });
+
+  app.delete('/v1/changes/:id/feedback', (c) => {
+    requireScope(c.get('key')!, 'changes:feedback');
+    const change = loadChange(c.req.param('id'));
+    run(ctx.db, 'DELETE FROM feedback WHERE change_id = ? AND client_fp = ?', String(change.id), clientFingerprint(c));
+    return c.body(null, 204);
+  });
+}
+
+const CSV_COLUMNS = ['id', 'detected_at', 'source_id', 'source_name', 'url', 'category', 'significance', 'meaningful', 'summary', 'words_added', 'words_removed', 'fact_changes'] as const;
+
+/**
+ * RFC 4180 CSV. Summaries and names come from third-party page text, so any cell that a spreadsheet
+ * would evaluate as a formula (leading = + - @, tab or carriage return) is prefixed with an
+ * apostrophe, per the OWASP guidance on CSV injection. Every cell is quoted.
+ */
+export function csvCell(v: unknown): string {
+  let s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  // Spreadsheets may trim leading whitespace (including NBSP, ideographic and zero-width spaces) before
+  // evaluating, and some treat fullwidth = + - @ like their ASCII forms.
+  if (/^[\s\u200B-\u200D\u2060\uFEFF]*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20]|^[\t\r\n]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function toCsv(rows: Row[]): string {
+  const lines = [CSV_COLUMNS.join(',')];
+  for (const r of rows) {
+    const rec: Record<(typeof CSV_COLUMNS)[number], unknown> = {
+      id: r.id, detected_at: r.detected_at, source_id: r.source_id, source_name: r.source_name, url: r.source_url,
+      category: r.category, significance: r.significance, meaningful: r.meaningful === 1, summary: r.summary,
+      words_added: r.words_added, words_removed: r.words_removed, fact_changes: JSON.parse(String(r.fact_changes)),
+    };
+    lines.push(CSV_COLUMNS.map((k) => csvCell(rec[k])).join(','));
+  }
+  return lines.join('\r\n') + '\r\n';
 }

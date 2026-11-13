@@ -20,6 +20,7 @@ export interface SourceRow {
   http_etag: string | null;
   http_last_modified: string | null;
   last_raw_hash: string | null;
+  tags: string;
   last_checked_at: string | null;
   /** Set when extraction settings change; the next successful fetch becomes a silent new baseline. */
   rebaseline_pending: number;
@@ -108,13 +109,13 @@ export async function checkSource(ctx: Ctx, source: SourceRow, runId: string | n
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             changeId, source.id, last.id, snapshotId, iso(now), sc.significance, sc.category, meaningful ? 1 : 0, sc.summary,
             d.wordsAdded, d.wordsRemoved, JSON.stringify(d.hunks), JSON.stringify(sc.factChanges), JSON.stringify(sc.signals));
-          if (meaningful) {
-            enqueueEvent(db, now, 'change.detected', {
-              change_id: changeId, source_id: source.id, source_name: source.name, url: source.url,
-              significance: sc.significance, category: sc.category, summary: sc.summary,
-              links: { self: `${ctx.config.publicBaseUrl}/v1/changes/${changeId}` },
-            });
-          }
+          // Every change is offered to subscriptions; unfiltered ones still only take meaningful ones.
+          enqueueEvent(db, now, 'change.detected', {
+            change_id: changeId, source_id: source.id, source_name: source.name, url: source.url,
+            significance: sc.significance, category: sc.category, summary: sc.summary, meaningful,
+            tags: parseJson<string[]>(source.tags, []),
+            links: { self: `${ctx.config.publicBaseUrl}/v1/changes/${changeId}` },
+          });
         }
       }
     }

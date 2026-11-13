@@ -50,7 +50,8 @@ async function api(path, opts = {}) {
   logTraffic({ method, path, status: res.status, ms: Math.round(performance.now() - t0), etag: res.headers.get('ETag'), rl: res.headers.get('RateLimit-Remaining'), rid: res.headers.get('X-Request-Id') });
   if (res.status === 304 && cached) return { status: 304, ok: true, data: cached.data, headers: res.headers, cached: true };
   const ct = res.headers.get('Content-Type') || '';
-  const data = ct.includes('json') ? await res.json() : await res.text();
+  // application/x-ndjson contains "json" but is not one JSON document, so match the JSON types exactly.
+  const data = /application\/(?:[a-z.+-]*\+)?json\b/.test(ct) ? await res.json() : await res.text();
   const etag = res.headers.get('ETag');
   if (method === 'GET' && res.ok && etag) etags.set(cacheKey, { etag, data });
   return { status: res.status, ok: res.ok, data, headers: res.headers, cached: false };
@@ -251,9 +252,14 @@ async function renderDrawerBody() {
   const body = $('#d-body');
   const facts = c.fact_changes.length ? `<table class="facts"><thead><tr><th>Price point</th><th>Before</th><th>After</th><th>Δ</th></tr></thead><tbody>${c.fact_changes.map((f) => `<tr><td>${esc(f.key)}</td><td class="mono">${f.from ?? '—'}</td><td class="mono">${f.to ?? '—'}</td><td class="mono">${f.pct === null ? '' : (f.pct > 0 ? '+' : '') + f.pct + '%'}</td></tr>`).join('')}</tbody></table>` : '';
   const why = `<div><b style="font-size:13px">Why it scored ${c.significance}</b><ul class="signals">${c.signals.map((s) => `<li>${esc(s)}</li>`).join('')}</ul></div>`;
+  const foot = `<p style="color:var(--muted);font-size:12.5px;margin:0">${c.words_added} words added, ${c.words_removed} removed. Snapshots <span class="mono">${esc(c.from_snapshot_id)}</span> → <span class="mono">${esc(c.to_snapshot_id)}</span>.</p>`;
   if (state.tab === 'visual') {
     const hunks = c.hunks.map((h) => `<div class="hunk">@@ −${h.old_start},${h.old_lines} +${h.new_start},${h.new_lines} @@</div>${h.lines.map((l) => `<div class="ln ${l.op}"><span class="no">${l.old ?? ''}</span><span class="no">${l.new ?? ''}</span><span>${l.op === 'add' ? '+' : l.op === 'del' ? '−' : ' '}</span><span>${segHtml(l)}</span></div>`).join('')}`).join('');
-    body.innerHTML = `${why}${facts}<div class="diff" aria-label="Word-level diff">${hunks}</div><p style="color:var(--muted);font-size:12.5px;margin:0">${c.words_added} words added, ${c.words_removed} removed. Snapshots <span class="mono">${esc(c.from_snapshot_id)}</span> → <span class="mono">${esc(c.to_snapshot_id)}</span>.</p>`;
+    body.innerHTML = `${why}${facts}${toolsHtml(c)}<div class="diff" aria-label="Word-level diff">${hunks}</div>${foot}`;
+    bindTools(c);
+  } else if (state.tab === 'split') {
+    body.innerHTML = `${why}${facts}${toolsHtml(c)}<div class="split" aria-label="Side-by-side diff"><div class="split-head">Before</div><div class="split-head">After</div>${splitRows(c.hunks)}</div>${foot}`;
+    bindTools(c);
   } else if (state.tab === 'unified') {
     body.innerHTML = '<pre class="code">Loading…</pre>';
     const r = await api(`/v1/changes/${c.id}`, { accept: 'text/x-diff' });
@@ -275,6 +281,116 @@ curl -si ${origin}/v1/changes/${c.id} \\
 # Both snapshots, as normalized text
 curl -s ${origin}/v1/snapshots/${c.to_snapshot_id} -H "Authorization: Bearer ${KEY}" -H "Accept: text/plain"`)}</pre>`;
   }
+}
+
+/** Side-by-side rows from stored hunks: context on both sides, deletions and additions paired in order. */
+function splitRows(hunks) {
+  const cell = (side, l) => (l ? `<div class="sc ${side === 'L' ? (l.op === 'del' ? 'del' : '') : l.op === 'add' ? 'add' : ''}"><span class="no">${side === 'L' ? l.old ?? '' : l.new ?? ''}</span><span>${segHtml(l)}</span></div>` : '<div class="sc empty"></div>');
+  let html = '';
+  for (const h of hunks) {
+    html += `<div class="split-hunk">@@ −${h.old_start},${h.old_lines} +${h.new_start},${h.new_lines} @@</div>`;
+    for (let i = 0; i < h.lines.length; ) {
+      const l = h.lines[i];
+      if (l.op === 'ctx') {
+        html += cell('L', l) + cell('R', l);
+        i++;
+        continue;
+      }
+      const dels = [];
+      const adds = [];
+      while (i < h.lines.length && h.lines[i].op === 'del') dels.push(h.lines[i++]);
+      while (i < h.lines.length && h.lines[i].op === 'add') adds.push(h.lines[i++]);
+      for (let k = 0; k < Math.max(dels.length, adds.length); k++) html += cell('L', dels[k]) + cell('R', adds[k]);
+    }
+  }
+  return html;
+}
+
+/** Suggest an ignore pattern from the first edited line: numbers become wildcards. */
+function suggestPattern(c) {
+  const line = c.hunks.flatMap((h) => h.lines).find((l) => l.op === 'del' || l.op === 'add');
+  if (!line) return '';
+  return line.text.replace(/^#{1,6} |^- /, '').replace(/\d[\d,.]*/g, '*').replace(/\*(\s*\*)+/g, '*').slice(0, 120);
+}
+
+function toolsHtml(c) {
+  return `<div class="tools">
+    <div class="tool"><b>Was this meaningful?</b><span class="sub">Scored ${c.significance}; the flag says <b>${c.meaningful ? 'meaningful' : 'minor'}</b>. Your answer feeds the precision panel.</span>
+      <div class="row"><button class="chip" type="button" data-verdict="meaningful">Yes</button><button class="chip" type="button" data-verdict="not_meaningful">No</button><span class="sub" id="fb-state" aria-live="polite"></span></div></div>
+    <form class="tool" id="preview-form"><b>Try an ignore rule</b><span class="sub">Replays a wildcard pattern over this source's last 50 changes. Read-only: nothing is saved.</span>
+      <div class="row"><label class="sr-only" for="preview-pattern">Pattern</label><input id="preview-pattern" maxlength="200" value="${esc(suggestPattern(c))}" spellcheck="false"><button class="btn" type="submit">Preview</button></div>
+      <div class="sub" id="preview-out" aria-live="polite"></div></form>
+  </div>`;
+}
+
+async function bindTools(c) {
+  const state1 = $('#fb-state');
+  const mark = (verdict) => document.querySelectorAll('#d-body [data-verdict]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.verdict === verdict)));
+  const describe = (f) => `Your label: ${f.verdict === 'meaningful' ? 'meaningful' : 'not meaningful'} (${f.agrees_with_flag ? 'agrees with' : 'disagrees with'} the flag).`;
+  const mine = await api(`/v1/changes/${c.id}/feedback`);
+  if (mine.ok) {
+    mark(mine.data.verdict);
+    state1.textContent = describe(mine.data);
+  } else state1.textContent = 'No label from you yet.';
+  document.querySelectorAll('#d-body [data-verdict]').forEach((b) => b.addEventListener('click', async () => {
+    const r = await api(`/v1/changes/${c.id}/feedback`, { method: 'PUT', body: { verdict: b.dataset.verdict } });
+    if (!r.ok) { state1.textContent = r.data.detail || r.data.title; return; }
+    mark(r.data.verdict);
+    state1.textContent = `${r.status === 201 ? 'Saved. ' : 'Updated. '}${describe(r.data)}`;
+    refresh();
+  }));
+  $('#preview-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const out = $('#preview-out');
+    const pattern = $('#preview-pattern').value.trim();
+    out.textContent = 'Replaying…';
+    const r = await api(`/v1/sources/${c.source_id}/ignore-preview`, { method: 'POST', body: { ignore_patterns: [pattern] } });
+    if (!r.ok) { out.innerHTML = `<b>${r.status} ${esc(r.data.title)}</b> ${esc((r.data.errors || []).map((x) => x.message).join('; ') || r.data.detail || '')}`; return; }
+    const p = r.data;
+    const sample = p.changes.filter((x) => x.suppressed).slice(0, 3).map((x) => `<li>${esc(x.summary)}</li>`).join('');
+    out.innerHTML = `Would have suppressed <b>${p.would_suppress} of ${p.changes_examined}</b> recent changes, including <b>${p.meaningful_suppressed} of ${p.meaningful_examined}</b> flagged meaningful.${p.budget_exhausted ? ' (Stopped early: work budget reached.)' : ''}${sample ? `<ul class="signals">${sample}</ul>` : ''}`;
+  });
+}
+
+// ------------------------------------------------------------------ export (CSV / NDJSON)
+async function exportChanges(type, ext, button) {
+  button.disabled = true;
+  try {
+    const q = new URLSearchParams({ limit: '1000' });
+    if (state.cat !== 'all') q.set('category', state.cat);
+    if (state.min) q.set('min_significance', String(state.min));
+    const r = await api(`/v1/changes?${q}`, { accept: type });
+    if (!r.ok) { toast((r.data && (r.data.detail || r.data.title)) || `HTTP ${r.status}`); return; }
+    const name = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')?.[1] || `driftline-changes.${ext}`;
+    const url = URL.createObjectURL(new Blob([r.data], { type }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`Exported ${name}${r.headers.get('Link') ? ' (first 1,000 rows; follow the Link header for more)' : ''}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ------------------------------------------------------------------ precision panel
+function renderPrecision(s) {
+  const f = s.feedback;
+  $('#precision-total').textContent = f.labels ? `${f.labels} label${f.labels === 1 ? '' : 's'} from ${f.labellers} client${f.labellers === 1 ? '' : 's'}${f.precision === null ? '' : ` · overall precision ${Math.round(f.precision * 100)}%`}` : '';
+  const caveat = '<p class="sub" style="color:var(--muted);font-size:12.5px;margin:10px 0 0">Unverified: one label per API key and network address, submitted by visitors about fictional sites, kept for 24 hours. It shows the mechanism, not field accuracy.</p>';
+  if (!f.labels) {
+    $('#precision').innerHTML = `<p class="empty">No labels yet, so there is no precision figure to show.</p>${caveat}`;
+    return;
+  }
+  $('#precision').innerHTML = `<div class="precision">${CATS.map((cat) => {
+    const b = f.by_category[cat];
+    if (!b || !(b.flagged_labels + b.minor_labels)) return '';
+    const pct = b.precision === null ? null : Math.round(b.precision * 100);
+    return `<div class="prec-row"><span class="pill" style="--pc:var(--c-${cat})">${cat}</span>
+      <div class="prec-bar" role="img" aria-label="${cat} precision ${pct ?? 'n/a'}%"><i style="width:${pct ?? 0}%;background:var(--c-${cat})"></i></div>
+      <span class="mono">${pct === null ? '—' : pct + '%'}</span><span class="sub">${b.agreed}/${b.flagged_labels} flagged agreed${b.missed ? ` · ${b.missed} missed` : ''}</span></div>`;
+  }).join('')}</div>${caveat}`;
 }
 
 // ------------------------------------------------------------------ price chart
@@ -471,6 +587,7 @@ async function refresh() {
     renderPrices(st.data);
     renderSources(st.data);
     renderDeliveries(st.data);
+    renderPrecision(st.data);
   }
   if (dg.ok && !dg.cached) { state.digests = dg.data.data; renderDigests(); }
   await loadChanges();
@@ -481,6 +598,8 @@ async function boot() {
   bindPropose();
   renderFilters();
   $('#run-now').addEventListener('click', () => runChecks(null));
+  $('#export-csv').addEventListener('click', (e) => exportChanges('text/csv', 'csv', e.currentTarget));
+  $('#export-ndjson').addEventListener('click', (e) => exportChanges('application/x-ndjson', 'ndjson', e.currentTarget));
   $('#price-series').addEventListener('change', () => renderPrices(state.stats));
   $('#d-close').addEventListener('click', closeDrawer);
   $('#scrim').addEventListener('click', closeDrawer);

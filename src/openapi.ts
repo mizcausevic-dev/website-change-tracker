@@ -62,7 +62,7 @@ export function buildOpenApi(baseUrl: string): S {
     openapi: '3.1.0',
     info: {
       title: 'Driftline: website change tracker API',
-      version: '1.0.0',
+      version: '1.1.0',
       description:
         'Track an approved list of web pages, store normalized snapshots, detect meaningful changes, and deliver digests and signed webhooks.\n\n' +
         'Conventions: RFC 9457 problem details for every error; opaque cursor pagination with RFC 8288 `Link` headers; strong ETags on every GET (send `If-None-Match` for 304s); ' +
@@ -108,6 +108,14 @@ export function buildOpenApi(baseUrl: string): S {
       '/v1/sources/{id}/reject': transition('reject', 'sources:approve', 'Reject a pending source (note required)', true),
       '/v1/sources/{id}/pause': transition('pause', 'sources:write', 'Pause checks for an approved source'),
       '/v1/sources/{id}/resume': transition('resume', 'sources:write', 'Resume a paused source'),
+      '/v1/sources/{id}/ignore-preview': {
+        post: {
+          tags: ['Sources'], operationId: 'previewIgnorePatterns', summary: 'Replay candidate ignore patterns over recent stored changes (safe: reads only, changes nothing)', security: sec('sources:read'),
+          parameters: [idParam('id', 'src')],
+          requestBody: { required: true, content: { 'application/json': { schema: { ...obj({ ignore_patterns: { type: 'array', minItems: 1, maxItems: 20, items: str({ maxLength: 200 }) } }), additionalProperties: false } } } },
+          responses: { '200': json(ref('IgnorePreview')), '404': problem('Unknown source'), '422': problem('Validation failed'), ...STD_ERRORS },
+        },
+      },
       '/v1/sources/{id}/snapshots': { get: { tags: ['Snapshots'], operationId: 'listSnapshots', summary: 'List stored snapshots (text omitted)', security: sec('sources:read'), parameters: [idParam('id', 'src'), ...PAGE_PARAMS], responses: { '200': json(list('Snapshot')), '404': problem('Unknown source'), ...STD_ERRORS } } },
       '/v1/sources/{id}/checks': {
         get: {
@@ -124,7 +132,7 @@ export function buildOpenApi(baseUrl: string): S {
       },
       '/v1/changes': {
         get: {
-          tags: ['Changes'], operationId: 'listChanges', summary: 'List detected changes (meaningful only, by default)', security: sec('changes:read'),
+          tags: ['Changes'], operationId: 'listChanges', summary: 'List or export detected changes (meaningful only, by default)', security: sec('changes:read'),
           parameters: [
             ...PAGE_PARAMS,
             { name: 'source_id', in: 'query', schema: str() },
@@ -133,7 +141,14 @@ export function buildOpenApi(baseUrl: string): S {
             { name: 'min_significance', in: 'query', schema: int({ minimum: 0, maximum: 100 }) },
             { name: 'since', in: 'query', schema: dt }, { name: 'until', in: 'query', schema: dt },
           ],
-          responses: { '200': json(list('Change'), 'OK', RL_HEADERS), '400': problem('Invalid query parameter'), ...STD_ERRORS },
+          responses: {
+            '200': {
+              description: 'A page of changes. `Accept: text/csv` or `application/x-ndjson` returns a change history export (needs `changes:export`; pages of up to 1,000, cursor in the `Link` header). CSV cells a spreadsheet would treat as formulas are prefixed with an apostrophe.',
+              headers: { ...RL_HEADERS, Link: { schema: str() } },
+              content: { 'application/json': { schema: list('Change') }, 'text/csv': { schema: str() }, 'application/x-ndjson': { schema: str() } },
+            },
+            '400': problem('Invalid query parameter'), '406': problem('No acceptable representation'), ...STD_ERRORS,
+          },
         },
       },
       '/v1/changes/{id}': {
@@ -141,6 +156,16 @@ export function buildOpenApi(baseUrl: string): S {
           tags: ['Changes'], operationId: 'getChange', summary: 'Get a change with its diff. `Accept: text/x-diff` returns a unified diff.', security: sec('changes:read'), parameters: [idParam('id', 'chg')],
           responses: { '200': { description: 'OK', content: { 'application/json': { schema: ref('ChangeWithDiff') }, 'text/x-diff': { schema: str() }, 'text/plain': { schema: str() } } }, '404': problem('Unknown change'), '406': problem('No acceptable representation'), ...STD_ERRORS },
         },
+      },
+      '/v1/changes/{id}/feedback': {
+        put: {
+          tags: ['Changes'], operationId: 'putChangeFeedback', summary: "Record or replace this client's verdict on whether a change was meaningful", security: sec('changes:feedback'),
+          parameters: [idParam('id', 'chg')],
+          requestBody: { required: true, content: { 'application/json': { schema: { ...obj({ verdict: str({ enum: ['meaningful', 'not_meaningful'] }), note: nullable(str({ maxLength: 500 })), suggested_ignore_pattern: nullable(str({ maxLength: 200 })) }, ['verdict']), additionalProperties: false } } } },
+          responses: { '200': json(ref('Feedback'), 'Replaced'), '201': json(ref('Feedback'), 'Created', { Location: { schema: str({ format: 'uri' }) } }), '404': problem('Unknown change'), '422': problem('Validation failed'), ...STD_ERRORS },
+        },
+        get: { tags: ['Changes'], operationId: 'getChangeFeedback', summary: "This client's verdict on a change", security: sec('changes:feedback'), parameters: [idParam('id', 'chg')], responses: { '200': json(ref('Feedback')), '404': problem('No feedback from this client, or unknown change'), ...STD_ERRORS } },
+        delete: { tags: ['Changes'], operationId: 'deleteChangeFeedback', summary: "Withdraw this client's verdict", security: sec('changes:feedback'), parameters: [idParam('id', 'chg')], responses: { '204': { description: 'Deleted' }, '404': problem('Unknown change'), ...STD_ERRORS } },
       },
       '/v1/check-runs': {
         post: {
@@ -171,13 +196,22 @@ export function buildOpenApi(baseUrl: string): S {
         post: {
           tags: ['Webhooks'], operationId: 'createWebhook', summary: 'Register an endpoint. The signing secret is returned once.', security: sec('webhooks:manage'),
           parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
-          requestBody: { required: true, content: { 'application/json': { schema: { ...obj({ url: str({ format: 'uri' }), events: { type: 'array', minItems: 1, items: str({ enum: EVENT_TYPES }) }, description: nullable(str({ maxLength: 200 })) }, ['url', 'events']), additionalProperties: false } } } },
+          requestBody: { required: true, content: { 'application/json': { schema: { ...obj({ url: str({ format: 'uri' }), events: { type: 'array', minItems: 1, items: str({ enum: EVENT_TYPES }) }, description: nullable(str({ maxLength: 200 })), filter: ref('WebhookFilter') }, ['url', 'events']), additionalProperties: false } } } },
           responses: { '201': json(ref('WebhookCreated'), 'Created'), '422': problem('Validation failed'), ...STD_ERRORS },
         },
       },
       '/v1/webhooks/{id}': {
         get: { tags: ['Webhooks'], operationId: 'getWebhook', summary: 'Get a webhook endpoint', security: sec('webhooks:manage'), parameters: [idParam('id', 'whk')], responses: { '200': json(ref('Webhook')), '404': problem('Unknown webhook'), ...STD_ERRORS } },
+        patch: {
+          tags: ['Webhooks'], operationId: 'updateWebhook', summary: 'Update events, description, active or filter (JSON Merge Patch; filter merges key by key)', security: sec('webhooks:manage'),
+          parameters: [idParam('id', 'whk'), { name: 'If-Match', in: 'header', required: true, schema: str() }],
+          requestBody: { required: true, content: { 'application/merge-patch+json': { schema: { ...obj({ events: { type: 'array', minItems: 1, items: str({ enum: EVENT_TYPES }) }, description: nullable(str({ maxLength: 200 })), active: { type: 'boolean' }, filter: nullable({ type: 'object' }) }, []), additionalProperties: false } } } },
+          responses: { '200': json(ref('Webhook')), '404': problem('Unknown webhook'), '412': problem('ETag mismatch'), '415': problem('Use application/merge-patch+json'), '422': problem('Validation failed'), '428': problem('If-Match header missing'), ...STD_ERRORS },
+        },
         delete: { tags: ['Webhooks'], operationId: 'deleteWebhook', summary: 'Delete a webhook endpoint', security: sec('webhooks:manage'), parameters: [idParam('id', 'whk')], responses: { '204': { description: 'Deleted' }, '404': problem('Unknown webhook'), ...STD_ERRORS } },
+      },
+      '/v1/webhooks/{id}/test': {
+        post: { tags: ['Webhooks'], operationId: 'testWebhook', summary: 'Send a signed webhook.test event now and return the attempt', security: sec('webhooks:manage'), parameters: [idParam('id', 'whk')], responses: { '201': json(ref('Delivery'), 'Delivery attempted'), '404': problem('Unknown webhook'), ...STD_ERRORS } },
       },
       '/v1/webhooks/{id}/deliveries': { get: { tags: ['Webhooks'], operationId: 'listDeliveries', summary: 'Delivery attempts, with retry state', security: sec('webhooks:manage'), parameters: [idParam('id', 'whk'), ...PAGE_PARAMS], responses: { '200': json(list('Delivery')), '404': problem('Unknown webhook'), ...STD_ERRORS } } },
       '/v1/stats/overview': { get: { tags: ['Stats'], operationId: 'getStatsOverview', summary: 'Aggregates behind the dashboard', security: sec('stats:read'), parameters: [{ name: 'days', in: 'query', schema: int({ minimum: 1, maximum: 90, default: 30 }) }], responses: { '200': json(ref('StatsOverview'), 'OK', RL_HEADERS), ...STD_ERRORS } } },
@@ -243,13 +277,29 @@ export function buildOpenApi(baseUrl: string): S {
         }),
         Digest: obj({ id: str({ pattern: '^dig_' }), object: str({ const: 'digest' }), period_start: dt, period_end: dt, created_at: dt, change_count: int(), email_status: str(), links: obj({ self: str() }) }),
         DigestWithPayload: { allOf: [ref('Digest'), obj({ payload: { type: 'object' } })] },
-        Webhook: obj({ id: str({ pattern: '^whk_' }), object: str({ const: 'webhook' }), url: str({ format: 'uri' }), description: nullable(str()), events: { type: 'array', items: str({ enum: EVENT_TYPES }) }, active: { type: 'boolean' }, secret_hint: str(), created_at: dt, links: obj({ self: str(), deliveries: str() }) }),
+        Webhook: obj({ id: str({ pattern: '^whk_' }), object: str({ const: 'webhook' }), url: str({ format: 'uri' }), description: nullable(str()), events: { type: 'array', items: str({ enum: EVENT_TYPES }) }, filter: ref('WebhookFilter'), active: { type: 'boolean' }, secret_hint: str(), created_at: dt, links: obj({ self: str(), deliveries: str() }) }),
         WebhookCreated: { allOf: [ref('Webhook'), obj({ secret: str({ pattern: '^whsec_' }) })] },
+        WebhookFilter: {
+          ...obj({
+            min_significance: int({ minimum: 0, maximum: 100, description: 'Replaces the default rule (meaningful changes only) for this subscription.' }),
+            categories: { type: 'array', maxItems: 20, items: str({ enum: CATEGORIES }) },
+            source_ids: { type: 'array', maxItems: 20, items: str({ pattern: '^src_' }) },
+            tags: { type: 'array', maxItems: 20, items: str() },
+          }, []),
+          additionalProperties: false,
+          description: 'Routing for change.detected. All listed conditions must hold; within a list, any value matches. Empty means meaningful changes from every source.',
+        },
+        Feedback: obj({ object: str({ const: 'feedback' }), change_id: str(), verdict: str({ enum: ['meaningful', 'not_meaningful'] }), agrees_with_flag: { type: 'boolean' }, note: nullable(str()), suggested_ignore_pattern: nullable(str()), created_at: dt, updated_at: dt, links: obj({ self: str(), change: str() }) }),
+        IgnorePreview: obj({
+          object: str({ const: 'ignore_preview' }), source_id: str(), ignore_patterns: { type: 'array', items: str() }, changes_examined: int(), would_suppress: int(),
+          meaningful_examined: int(), meaningful_suppressed: int(), budget_exhausted: { type: 'boolean' }, note: str(),
+          changes: { type: 'array', items: obj({ change_id: str(), detected_at: dt, significance: int(), meaningful: { type: 'boolean' }, summary: str(), suppressed: { type: 'boolean' } }) },
+        }),
         Delivery: obj({
           id: str({ pattern: '^dlv_' }), object: str({ const: 'delivery' }), webhook_id: str(), message_id: str(), event_type: str(), status: str({ enum: ['pending', 'succeeded', 'retrying', 'failed'] }),
           attempts: int(), last_response_status: nullable(int()), last_error: nullable(str()), created_at: dt, next_attempt_at: nullable(dt), delivered_at: nullable(dt),
         }),
-        StatsOverview: obj({ object: str({ const: 'stats_overview' }), as_of: { ...dt, description: 'Timestamp of the newest data in the response.' }, window: { type: 'object' }, totals: { type: 'object' }, by_category: { type: 'object' }, daily: { type: 'array' }, sources: { type: 'array' }, price_series: { type: 'array' }, recent_deliveries: { type: 'array', items: ref('Delivery') }, receiver: { type: 'object' } }),
+        StatsOverview: obj({ object: str({ const: 'stats_overview' }), as_of: { ...dt, description: 'Timestamp of the newest data in the response.' }, window: { type: 'object' }, totals: { type: 'object' }, by_category: { type: 'object' }, daily: { type: 'array' }, sources: { type: 'array' }, price_series: { type: 'array' }, recent_deliveries: { type: 'array', items: ref('Delivery') }, receiver: { type: 'object' }, feedback: { type: 'object', description: 'Precision of the meaningful flag from human labels only; null figures mean no labels yet.' } }),
       },
     },
   };

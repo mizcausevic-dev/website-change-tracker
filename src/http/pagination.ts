@@ -12,8 +12,8 @@ export interface PageParams {
   before: string | null;
 }
 
-export function pageParams(c: Context): PageParams {
-  const limit = intParam(c, 'limit', 25, 1, 100);
+export function pageParams(c: Context, defaultLimit = 25, maxLimit = 100): PageParams {
+  const limit = intParam(c, 'limit', defaultLimit, 1, maxLimit);
   const cursor = c.req.query('cursor');
   if (!cursor) return { limit, before: null };
   let decoded: unknown;

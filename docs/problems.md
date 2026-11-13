@@ -58,6 +58,9 @@ Every problem also carries `instance` (the request path) and `request_id` (match
 ## precondition-required
 `428`. `PATCH` requires `If-Match` so concurrent edits are not silently lost.
 
+## feedback-limit
+`429`. A change already has 200 labels, or the demo's feedback store is full. Demo labels expire after 24 hours.
+
 ## proposal-limit
 `429`. A key that can only propose sources (such as the shared demo key) may have 3 proposals awaiting review per client. On the public demo, visitor proposals expire after 30 minutes.
 

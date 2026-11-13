@@ -37,7 +37,7 @@
   </div>
 </header>
 
-<p class="notice">Live demo. The tracked sites are fictional <code>*.example</code> pages served by this app and changing on a schedule. Thirty days of history were replayed at boot from the same deterministic fixtures, and the scheduler keeps checking live. This page calls the public REST API with the demo key <code>wct_demo_public_explorer_key</code> (read, propose, run checks). Every request it makes is logged at the bottom.</p>
+<p class="notice">Live demo. The tracked sites are fictional <code>*.example</code> pages served by this app and changing on a schedule. Thirty days of history were replayed at boot from the same deterministic fixtures, and the scheduler keeps checking live. This page calls the public REST API with the demo key <code>wct_demo_public_explorer_key</code> (read, propose, run checks, label changes, export). Every request it makes is logged at the bottom.</p>
 
 <main class="grid" id="app">
   <section class="span-12 kpis" id="kpis" aria-label="Key figures"></section>
@@ -53,7 +53,7 @@
 
   <section class="card span-7">
     <header><h2>Change feed</h2><span class="sub" id="feed-sub"></span>
-      <div class="right"><button class="btn primary" id="run-now" type="button">Run checks now</button></div>
+      <div class="right"><button class="btn ghost" id="export-csv" type="button" title="GET /v1/changes with Accept: text/csv">Export CSV</button><button class="btn ghost" id="export-ndjson" type="button" title="GET /v1/changes with Accept: application/x-ndjson">NDJSON</button><button class="btn primary" id="run-now" type="button">Run checks now</button></div>
     </header>
     <div class="filters" id="filters" role="group" aria-label="Filter by category"></div>
     <ul class="feed" id="feed" aria-live="polite"></ul>
@@ -65,6 +65,11 @@
     <div id="prices"></div>
     <p class="sub" id="price-note" style="color:var(--muted);font-size:12.5px;margin:8px 0 0"></p>
     <div class="table-wrap" style="max-height:300px;overflow:auto;margin-top:10px"><table class="facts" id="price-history"></table></div>
+  </section>
+
+  <section class="card span-12">
+    <header><h2>Is the meaningful flag right?</h2><span class="sub">Precision from visitor labels only. Open any change and answer “Was this meaningful?”</span><div class="right"><span class="sub" id="precision-total"></span></div></header>
+    <div id="precision"></div>
   </section>
 
   <section class="card span-12">
@@ -106,7 +111,7 @@
     <div class="row"><span id="d-cat"></span><span class="sub" id="d-when" style="color:var(--muted);font-size:13px"></span><button class="btn ghost icon-btn" id="d-close" type="button" aria-label="Close" style="margin-left:auto">✕</button></div>
     <h2 id="d-title"></h2>
     <div class="row" style="font-size:13px;color:var(--muted)" id="d-source"></div>
-    <div class="tabs" role="tablist"><button class="chip" role="tab" data-tab="visual" aria-pressed="true">Word diff</button><button class="chip" role="tab" data-tab="unified" aria-pressed="false">text/x-diff</button><button class="chip" role="tab" data-tab="curl" aria-pressed="false">curl</button></div>
+    <div class="tabs" role="tablist"><button class="chip" role="tab" data-tab="visual" aria-pressed="true">Word diff</button><button class="chip" role="tab" data-tab="split" aria-pressed="false">Side by side</button><button class="chip" role="tab" data-tab="unified" aria-pressed="false">text/x-diff</button><button class="chip" role="tab" data-tab="curl" aria-pressed="false">curl</button></div>
   </header>
   <div class="body" id="d-body"></div>
 </aside>

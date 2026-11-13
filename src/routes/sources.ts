@@ -4,7 +4,7 @@ import type { Ctx } from '../context.ts';
 import { iso } from '../clock.ts';
 import { all, one, run, tx, type Row } from '../db.ts';
 import { isId, newId } from '../ids.ts';
-import { isValidSelector } from '../core/extract.ts';
+import { applyIgnorePatternsToText, compileIgnorePattern, isValidSelector, PREVIEW_BUDGET } from '../core/extract.ts';
 import { isPublicAddress } from '../core/ssrf.ts';
 import { isIP } from 'node:net';
 import { requireScope } from '../http/auth.ts';
@@ -13,6 +13,7 @@ import { page, pageParams } from '../http/pagination.ts';
 import { ApiError, Problems } from '../http/problem.ts';
 import { checkOut, snapshotOut, sourceOut } from '../http/repr.ts';
 import { enumParam, readJsonObject, validate, type Spec } from '../http/validate.ts';
+import type { RateLimiter } from '../http/ratelimit.ts';
 
 const STATUSES = ['pending', 'approved', 'paused', 'rejected'] as const;
 const MAX_PENDING = 50;
@@ -229,4 +230,58 @@ export function registerSources(app: Hono<Env>, ctx: Ctx): void {
     return c.json(snapshotOut(row, base, true));
   });
 
+}
+
+/**
+ * POST /v1/sources/{id}/ignore-preview: replay candidate ignore patterns over the stored snapshots
+ * of a source's recent changes and report which changes they would have suppressed. Safe: it reads
+ * stored text only, fetches nothing, and changes nothing, so the read-only demo key may use it.
+ * CSS selector rules cannot be replayed this way because snapshots keep text, not HTML.
+ */
+export function registerIgnorePreview(app: Hono<Env>, ctx: Ctx, limiter: RateLimiter): void {
+  const PREVIEW_CHANGES = 50;
+  app.post('/v1/sources/:id/ignore-preview', async (c) => {
+    const key = c.get('key')!;
+    requireScope(key, 'sources:read');
+    const id = c.req.param('id');
+    const src = isId(id, 'src') ? one<Row>(ctx.db, 'SELECT id FROM sources WHERE id = ?', id) : undefined;
+    if (!src) throw Problems.notFound('Source', id);
+    const d = limiter.take(`preview:${key.id}:${c.get('clientIp')}`, 20, ctx.clock.now());
+    if (!d.allowed) throw new ApiError(429, 'rate-limited', 'Too many previews', `Retry after ${d.retryAfterSec} seconds.`, {}, { 'Retry-After': String(d.retryAfterSec) });
+    const body = await readJsonObject(c);
+    const { value, errors } = validate(body, {
+      ignore_patterns: { type: 'string[]', required: true, maxItems: 20, itemMaxLength: 200, check: (v: string[]) => (v.length && v.every((p) => p.replace(/\*/g, '').trim()) ? null : 'must list 1 to 20 patterns, each with some literal text') },
+    });
+    if (errors.length) throw Problems.validation(errors);
+    const patterns = (value.ignore_patterns as string[]).map(compileIgnorePattern);
+    const rows = all<{ id: string; detected_at: string; significance: number; meaningful: number; summary: string; from_text: string; to_text: string }>(ctx.db,
+      `SELECT c.id, c.detected_at, c.significance, c.meaningful, c.summary, a.text AS from_text, b.text AS to_text
+       FROM changes c JOIN snapshots a ON a.id = c.from_snapshot_id JOIN snapshots b ON b.id = c.to_snapshot_id
+       WHERE c.source_id = ? ORDER BY c.id DESC LIMIT ?`, id, PREVIEW_CHANGES);
+    const budget = { left: PREVIEW_BUDGET };
+    const results: Array<{ change_id: string; detected_at: string; significance: number; meaningful: boolean; summary: string; suppressed: boolean }> = [];
+    let exhausted = false;
+    for (const r of rows) {
+      const a = applyIgnorePatternsToText(r.from_text, patterns, budget);
+      const b = a === null ? null : applyIgnorePatternsToText(r.to_text, patterns, budget);
+      if (a === null || b === null) {
+        exhausted = true;
+        break;
+      }
+      results.push({ change_id: r.id, detected_at: r.detected_at, significance: r.significance, meaningful: r.meaningful === 1, summary: r.summary, suppressed: a === b });
+    }
+    const meaningful = results.filter((r) => r.meaningful);
+    return c.json({
+      object: 'ignore_preview',
+      source_id: id,
+      ignore_patterns: value.ignore_patterns,
+      changes_examined: results.length,
+      would_suppress: results.filter((r) => r.suppressed).length,
+      meaningful_examined: meaningful.length,
+      meaningful_suppressed: meaningful.filter((r) => r.suppressed).length,
+      budget_exhausted: exhausted,
+      note: 'Replays the patterns over stored snapshot text of the most recent changes, on top of the rules the source already has. CSS selector rules cannot be replayed because snapshots store text, not HTML.',
+      changes: results,
+    });
+  });
 }

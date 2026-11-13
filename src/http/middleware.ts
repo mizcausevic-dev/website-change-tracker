@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
+import { isIP } from 'node:net';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import type { Ctx } from '../context.ts';
 import { one, run } from '../db.ts';
@@ -24,13 +25,29 @@ export function clientIp(c: Context, trustProxy: boolean): string {
     // Cloud Run's front end appends the connecting client's address as the last entry.
     const xff = c.req.header('x-forwarded-for');
     const last = xff?.split(',').pop()?.trim();
-    if (last) return last;
+    if (last) return clientKey(last);
   }
   try {
-    return getConnInfo(c).remote.address ?? 'unknown';
+    return clientKey(getConnInfo(c).remote.address ?? 'unknown');
   } catch {
     return 'unknown';
   }
+}
+
+/**
+ * The identity used for rate limits and per-client records. One IPv6 subscriber usually holds a whole
+ * /64, so IPv6 addresses are reduced to their /64 prefix; otherwise one client could mint unlimited
+ * buckets and fingerprints by rotating addresses within it.
+ */
+export function clientKey(ip: string): string {
+  if (isIP(ip) !== 6) return ip;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped) return mapped[1]!;
+  const [head = '', tail = ''] = ip.toLowerCase().split('::');
+  const h = head ? head.split(':') : [];
+  const t = ip.includes('::') ? (tail ? tail.split(':') : []) : [];
+  const groups = ip.includes('::') ? [...h, ...Array(8 - h.length - t.length).fill('0'), ...t] : h;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
 }
 
 export function requestContext(ctx: Ctx): MiddlewareHandler<Env> {
@@ -186,4 +203,9 @@ export function idempotency(ctx: Ctx): MiddlewareHandler<Env> {
     const stored = await c.res.clone().text();
     run(ctx.db, `UPDATE idempotency_keys SET state = 'complete', status = ?, headers = ?, body = ? WHERE scope = ?`, c.res.status, JSON.stringify(keep), stored, scope);
   };
+}
+
+/** Stable per-(API key, client IP) identity for shared keys such as the public demo key. */
+export function clientFingerprint(c: Context<Env>): string {
+  return createHash('sha256').update(`${c.get('key')?.id ?? 'anon'}:${c.get('clientIp')}`).digest('hex').slice(0, 32);
 }

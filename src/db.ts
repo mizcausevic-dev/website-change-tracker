@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   description TEXT,
   secret TEXT NOT NULL,
   events TEXT NOT NULL,
+  filter TEXT NOT NULL DEFAULT '{}',
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 ) STRICT;
@@ -146,6 +147,17 @@ CREATE TABLE IF NOT EXISTS deliveries (
   delivered_at TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS deliveries_due ON deliveries (status, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS feedback (
+  change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+  client_fp TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN ('meaningful','not_meaningful')),
+  note TEXT,
+  suggested_ignore_pattern TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (change_id, client_fp)
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   scope TEXT PRIMARY KEY,
@@ -173,6 +185,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; ddl: string; afterAd
     afterAdd: "UPDATE sources SET rebaseline_pending = 1, last_raw_hash = NULL WHERE ignore_patterns != '[]'",
   },
   { table: 'checks', column: 'warnings', ddl: "warnings TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'webhooks', column: 'filter', ddl: "filter TEXT NOT NULL DEFAULT '{}'" },
 ];
 
 function migrate(db: DatabaseSync): void {

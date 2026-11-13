@@ -136,7 +136,11 @@ const NOISE_FILTERS: Array<{ name: string; re: RegExp; token: string; accept?: (
  * the worst case is capped no matter what pattern or page text an attacker controls.
  */
 export const WILDCARD_GAP = 400;
-export const IGNORE_PATTERN_BUDGET = 20_000_000;
+// Charged per pattern pass: each line's length (lowercasing plus the first-segment scan) and
+// every character searched in a later-segment window. Sized so a 2 MB page with 20 patterns fits.
+export const IGNORE_PATTERN_BUDGET = 60_000_000;
+// Previews replay over many stored texts per request, so they get a smaller cap.
+export const PREVIEW_BUDGET = 8_000_000;
 
 export interface ScanBudget {
   left: number;
@@ -171,6 +175,8 @@ export function compileIgnorePattern(pattern: string): CompiledPattern {
 export function stripWildcardMatches(line: string, pattern: CompiledPattern, budget: ScanBudget): { out: string; hits: number } | null {
   const { segments, leading } = pattern;
   if (!segments.length) return { out: line, hits: 0 };
+  budget.left -= line.length;
+  if (budget.left < 0) return null;
   const folded = fold(line);
   // If lowercasing still changed the length, positions would not line up; skip rather than mis-cut.
   if (folded.length !== line.length) return { out: line, hits: 0 };
@@ -332,4 +338,24 @@ export function isValidSelector(sel: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Apply extra ignore patterns to already-extracted snapshot text, exactly as extract() applies
+ * them after the built-in masks: per line, then whitespace collapse, then empty lines dropped.
+ * Used by the ignore-rule preview. Returns null if the shared budget ran out.
+ */
+export function applyIgnorePatternsToText(text: string, patterns: CompiledPattern[], budget: ScanBudget): string | null {
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    let l = line;
+    for (const p of patterns) {
+      const r = stripWildcardMatches(l, p, budget);
+      if (!r) return null;
+      l = r.out;
+    }
+    l = collapse(l);
+    if (l && l !== '-' && l !== '#') out.push(l);
+  }
+  return out.join('\n');
 }

@@ -88,7 +88,7 @@
     </section>
 
     <section id="webhooks"><h2>Webhooks</h2>
-      <p>Events: <code>change.detected</code> (meaningful changes only), <code>digest.ready</code>, <code>check_run.completed</code>. Deliveries are signed with the <a href="https://www.standardwebhooks.com/">Standard Webhooks</a> scheme. The signing secret is shown once, when the endpoint is created. Failed deliveries retry after 1 minute, 5 minutes, 30 minutes, 2 hours and 6 hours, then stop.</p>
+      <p>Events: <code>change.detected</code> (meaningful changes by default; see filters below), <code>digest.ready</code>, <code>check_run.completed</code>. Deliveries are signed with the <a href="https://www.standardwebhooks.com/">Standard Webhooks</a> scheme. The signing secret is shown once, when the endpoint is created. Failed deliveries retry after 1 minute, 5 minutes, 30 minutes, 2 hours and 6 hours, then stop.</p>
 <pre class="code">import { createHmac, timingSafeEqual } from 'node:crypto';
 
 // Verify a Driftline delivery. `secret` is the whsec_… value returned at creation.
@@ -102,6 +102,25 @@ export function verify(secret, headers, rawBody) {
     return got.length === expected.length &amp;&amp; timingSafeEqual(got, expected);
   });
 }</pre>
+    </section>
+
+    <section id="filters"><h2>Webhook filters</h2>
+      <p>Each subscription can route <code>change.detected</code> with a <code>filter</code>: <code>min_significance</code>, <code>categories</code>, <code>source_ids</code> and <code>tags</code>. All listed conditions must hold; within a list, any value matches. Without a filter a subscription receives only meaningful changes, using each source's own threshold. <code>min_significance</code> replaces that rule for one subscription, so a legal endpoint can receive every edit to terms pages while an on-call endpoint only hears about status changes.</p>
+<pre class="code">{ "url": "https://legal.example.com/hooks/driftline", "events": ["change.detected"],
+  "filter": { "min_significance": 0, "categories": ["legal"] } }</pre>
+      <p><code>PATCH /v1/webhooks/{id}</code> takes JSON Merge Patch with <code>If-Match</code>: <code>filter</code> merges key by key, a key set to <code>null</code> is removed, and <code>"filter": null</code> clears it. <code>POST /v1/webhooks/{id}/test</code> sends a signed <code>webhook.test</code> event immediately so you can check signature verification.</p>
+    </section>
+
+    <section id="preview"><h2>Ignore-rule preview</h2>
+      <p><code>POST /v1/sources/{id}/ignore-preview</code> replays candidate <code>ignore_patterns</code> over the stored snapshots of the source's last 50 changes and reports which changes they would have suppressed, and how many of those were flagged meaningful. It reads stored text only and changes nothing, so the read-only demo key can use it. CSS selector rules cannot be replayed this way because snapshots keep text, not HTML.</p>
+    </section>
+
+    <section id="feedback"><h2>Feedback on the meaningful flag</h2>
+      <p><code>PUT /v1/changes/{id}/feedback</code> records your verdict (<code>meaningful</code> or <code>not_meaningful</code>) as a sub-resource you own: <code>201</code> the first time, <code>200</code> when replaced, with <code>GET</code> and <code>DELETE</code> on the same URL. One verdict per API key and network address per change (IPv6 grouped by /64), so clients behind the same NAT share one label. On the demo, labels expire after 24 hours, with at most 200 per change. The stats overview turns these labels into precision per category; with no labels it reports <code>null</code>, not an estimate. On the public demo the labels come from visitors and describe fictional sites, so they show the mechanism, not field accuracy.</p>
+    </section>
+
+    <section id="export"><h2>Change history export</h2>
+      <p>The changes collection is also available as CSV (<code>Accept: text/csv</code>) or NDJSON (<code>Accept: application/x-ndjson</code>), with the same filters and cursor pagination: pages of up to 1,000 rows, next page in the <code>Link</code> header. It needs the <code>changes:export</code> scope. Cells that a spreadsheet would evaluate as formulas are prefixed with an apostrophe. The export reflects what this deployment stores: the public demo keeps 30 days in memory, so it is a working copy, not an archival record.</p>
     </section>
 
     <section id="fetching"><h2>How pages are fetched</h2>

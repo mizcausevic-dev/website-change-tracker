@@ -16,7 +16,7 @@ The demo tracks fictional sites on the reserved `.example` domain, served by the
 
 ## Try the API
 
-The demo key is public on purpose. It can read everything, propose sources, and start check runs; it cannot approve, edit, or manage webhooks.
+The demo key is public on purpose. It can read everything, propose sources, start check runs, label changes and export history; it cannot approve, edit, or manage webhooks.
 
 ```bash
 export KEY=wct_demo_public_explorer_key
@@ -37,6 +37,17 @@ curl -si $API/v1/stats/overview -H "Authorization: Bearer $KEY" -H 'If-None-Matc
 # Propose a page. Retrying with the same Idempotency-Key replays the first response.
 curl -si $API/v1/sources -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -H "Idempotency-Key: 9b1d7c2e" -d '{"url":"https://www.example.com/pricing","name":"Example pricing"}'
+
+# Would ignoring review counts have removed past noise? (read-only replay)
+curl -s $API/v1/sources/<source id>/ignore-preview -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" -d '{"ignore_patterns":["Rated * out of * from * reviews"]}'
+
+# Was this change really meaningful? 201 the first time, 200 when you change your mind
+curl -si -X PUT $API/v1/changes/<id>/feedback -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" -d '{"verdict":"not_meaningful"}'
+
+# Export the change history as CSV (or Accept: application/x-ndjson)
+curl -s "$API/v1/changes?limit=1000" -H "Authorization: Bearer $KEY" -H "Accept: text/csv" -o changes.csv
 
 # Check everything now: 202 Accepted with Location and Retry-After, then poll
 curl -si -X POST $API/v1/check-runs -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}'
@@ -59,6 +70,10 @@ curl -si -X POST $API/v1/check-runs -H "Authorization: Bearer $KEY" -H "Content-
 | Auth | Bearer API keys hashed at rest, per-scope authorization, RFC 6750 `WWW-Authenticate` challenges | tests |
 | Rate limiting | Token bucket per key and client, `RateLimit-*` headers, `Retry-After` on 429, separate bucket for failed auth | tests |
 | Webhooks | Standard Webhooks HMAC-SHA256 signatures with timestamps, retries at 1m / 5m / 30m / 2h / 6h, secret shown once; an in-process receiver verifies every delivery in the demo | tests |
+| Routing | Per-subscription webhook filters (`min_significance`, categories, sources, tags) with merge-patch updates and a signed test event | `test/features.test.ts` |
+| Feedback loop | `PUT /v1/changes/{id}/feedback` as a client-owned sub-resource (201 then 200); precision per category from real labels only, null when there are none | `test/features.test.ts` |
+| Safe what-if | `POST /v1/sources/{id}/ignore-preview` replays candidate ignore rules over stored snapshots without changing anything | `test/features.test.ts` |
+| Exports | The same collection as CSV or NDJSON through `Accept`, cursor-paged with `Link`, spreadsheet-formula cells neutralised | `test/features.test.ts` |
 | Contract | Hand-written OpenAPI 3.1; tests fail if a route is served but undocumented (or the reverse), and validate real responses with Ajv | `test/contract.test.ts` |
 
 ## Architecture

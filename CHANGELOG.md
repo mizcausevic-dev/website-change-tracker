@@ -30,3 +30,13 @@ Security and correctness fixes found in a design review of proposed features.
 - Checks carry `warnings`: `ignore_patterns_budget_exceeded` and `selector_not_found`.
 - Ignore patterns: a leading `*` reaches back up to 400 characters (as before); a Turkish dotted capital I no longer disables matching on its line. Behaviour change: a middle segment is taken at its earliest occurrence and is not retried when a later segment is out of range, which is what keeps matching linear.
 - Databases created by earlier versions are migrated (new columns added); sources that use `ignore_patterns` re-baseline once because matching changed.
+
+## 1.1.0 (2026-11-12)
+
+Five features, chosen after product, engineering and security reviews of a wider proposal list (chat-app integrations, server-side validation scripts, regex rules and "compliance" exports were declined; see the 1.0.2 notes for the bugs those reviews found).
+
+- **Webhook filters.** Subscriptions can route `change.detected` by `min_significance`, categories, sources and tags. Unfiltered subscriptions behave as before. `PATCH /v1/webhooks/{id}` (JSON Merge Patch with If-Match) and `POST /v1/webhooks/{id}/test`.
+- **Ignore-rule preview.** `POST /v1/sources/{id}/ignore-preview` replays candidate patterns over stored snapshots and reports what they would have suppressed. Read-only.
+- **Side-by-side diff** in the dashboard drawer.
+- **Feedback on the meaningful flag.** `PUT /v1/changes/{id}/feedback` and per-category precision in the stats overview, from real labels only.
+- **Change history export.** CSV and NDJSON on `GET /v1/changes` through content negotiation, cursor-paged, with spreadsheet-formula neutralisation. New scopes `changes:feedback` and `changes:export` (granted to the demo key, whose data is fictional).

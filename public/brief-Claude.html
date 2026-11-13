@@ -91,7 +91,7 @@
     </section>
 
     <section id="engage"><h2>6. How users engage</h2>
-      <p><b>Built:</b> the change feed with category and significance filters, word-level diffs, the daily digest, and webhooks for pushing changes into chat or ticketing tools. <b>Proposed:</b> a "not meaningful" button on each change, which doubles as labeled training data for the scorer.</p>
+      <p><b>Built:</b> the change feed with category and significance filters, word-level diffs, the daily digest, and webhooks for pushing changes into chat or ticketing tools. <b>Built in 1.1:</b> a "Was this meaningful?" control on each change that feeds a precision panel, an ignore-rule preview that shows what a rule would have suppressed before anyone saves it, a side-by-side diff, per-subscription webhook filters, and CSV/NDJSON export of the change history.</p>
     </section>
 
     <section id="convert"><h2>7. How users convert</h2>
@@ -143,7 +143,7 @@
 
     <section id="kpis"><h2>KPIs and events</h2>
       <table class="facts"><thead><tr><th>KPI</th><th>Decision it informs</th><th>Event (canonical dictionary)</th><th>State</th></tr></thead><tbody>
-        <tr><td>Precision of the meaningful flag</td><td>Whether default thresholds are right per category</td><td>Feedback label on each change</td><td>Proposed</td></tr>
+        <tr><td>Precision of the meaningful flag</td><td>Whether default thresholds are right per category</td><td><code>PUT /v1/changes/{id}/feedback</code></td><td>Built; demo labels describe fictional sites</td></tr>
         <tr><td>Demo check runs started</td><td>Whether the demo explains the product</td><td><code>tool_complete</code></td><td>Proposed, not wired</td></tr>
         <tr><td>Clicks to docs and repository</td><td>Whether developer discovery works</td><td><code>self_serve_cta_click</code></td><td>Proposed, not wired</td></tr>
       </tbody></table>

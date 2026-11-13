@@ -24,6 +24,7 @@ export function prune(ctx: Ctx, now: number): void {
   run(ctx.db, 'DELETE FROM checks WHERE started_at < ?', iso(now - 35 * DAY));
   if (ctx.config.demoMode) {
     run(ctx.db, "DELETE FROM sources WHERE status = 'pending' AND proposer_fp IS NOT NULL AND created_at < ?", iso(now - 30 * 60_000));
+    run(ctx.db, 'DELETE FROM feedback WHERE updated_at < ?', iso(now - DAY));
   }
 }
 

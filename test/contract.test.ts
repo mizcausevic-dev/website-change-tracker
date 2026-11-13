@@ -75,3 +75,15 @@ describe('responses match schemas', () => {
     }
   });
 });
+
+describe('new 1.1 responses match schemas', () => {
+  it('ignore preview, feedback, webhook filter, test delivery', async () => {
+    const src = ((await (await h.req('GET', '/v1/sources?q=kestrel')).json()) as { data: Array<{ id: string }> }).data[0]!;
+    check('IgnorePreview', await (await h.req('POST', `/v1/sources/${src.id}/ignore-preview`, { body: { ignore_patterns: ['Rated*reviews'] } })).json());
+    const chg = ((await (await h.req('GET', '/v1/changes?limit=1')).json()) as { data: Array<{ id: string }> }).data[0]!;
+    check('Feedback', await (await h.req('PUT', `/v1/changes/${chg.id}/feedback`, { body: { verdict: 'meaningful', note: 'price moved' } })).json());
+    const w = await (await h.req('POST', '/v1/webhooks', { body: { url: 'https://hooks.example.net/f', events: ['change.detected'], filter: { min_significance: 0, tags: ['legal'] } } })).json() as { id: string };
+    check('WebhookCreated', w);
+    check('Delivery', await (await h.req('POST', `/v1/webhooks/${w.id}/test`)).json());
+  });
+});
