@@ -25,6 +25,6 @@
     "@types/node": "24.19.2",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }
