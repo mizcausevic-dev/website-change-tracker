@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 # Base image pinned by digest (node:24.22.3-bookworm-slim, multi-arch index; a Node security release) so rebuilds are reproducible.
-FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS deps
+FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # --ignore-scripts: no dependency install hooks run at build time.
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
+FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
 # TRUST_PROXY is deliberately not set here: it is only safe behind a proxy that appends the client IP
 # (set it in the Cloud Run service config). Anywhere else it would let clients pick their rate-limit bucket.
 ENV NODE_ENV=production PORT=8080
